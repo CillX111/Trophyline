@@ -477,6 +477,20 @@
                         </Grid>
                     </Border>
 
+                    <Border x:Name="SpotifyWindowRow" Classes="card" Padding="16,10" Margin="0,12,0,0">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel VerticalAlignment="Center">
+                                <ToggleSwitch x:Name="HideSpotifySwitch" OnContent="" OffContent="" Padding="0" MinWidth="0"
+                                              Content="Run Spotify hidden in the background"/>
+                                <TextBlock Classes="muted" FontSize="12" Margin="0,2,0,0" TextWrapping="Wrap"
+                                           Text="No Spotify window or taskbar button: it just plays. Control it from here or with your keyboard's media keys."/>
+                            </StackPanel>
+                            <Button x:Name="SpotifyWindowButton" Grid.Column="1" Classes="pill" Click="ToggleSpotifyWindow_Click" VerticalAlignment="Center">
+                                <TextBlock x:Name="SpotifyWindowButtonText" Text="Show Spotify"/>
+                            </Button>
+                        </Grid>
+                    </Border>
+
                     <Grid ColumnDefinitions="*,12,Auto" Margin="0,22,0,0">
                         <TextBox x:Name="PlaylistLink" Classes="search" Watermark="Paste a Spotify playlist, album or artist link…">
                             <TextBox.InnerLeftContent>

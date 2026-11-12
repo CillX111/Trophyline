@@ -204,6 +204,14 @@ static class Program
 
     internal static string ReadLanguage() => ReadConfig().Language;
 
+    internal static Config Settings() => ReadConfig();
+
+    internal static void SaveSettings(Config cfg)
+    {
+        try { File.WriteAllText(ConfigPath, JsonSerializer.Serialize(cfg, Json.Config)); }
+        catch (IOException ex) { LogError("config save: " + ex.Message); }
+    }
+
     /// The Steam folder: from config.json if set, otherwise found automatically.
     internal static string? SteamFolder()
     {
@@ -270,6 +278,8 @@ public sealed class Config
     public string SteamFolder { get; set; } = "";
     /// Leave empty to use <Steam>/appcache/stats.
     public string StatsFolder { get; set; } = "";
+    /// Run Spotify as a background process with its window hidden (Windows).
+    public bool HideSpotify { get; set; } = true;
 }
 
 [JsonSerializable(typeof(Config))]

@@ -65,6 +65,16 @@ public partial class MainWindow : Window
         // Spotify: ask what's playing every 2 seconds while the window is open.
         musicTimer.Tick += async (_, _) => await RefreshMusic();
         PlaylistLink.KeyDown += async (_, e) => { if (e.Key == Key.Enter) { e.Handled = true; await AddPlaylistFromBox(); } };
+        SpotifyWindowRow.IsVisible = Platform.Windows;
+        HideSpotifySwitch.IsChecked = Program.Settings().HideSpotify;
+        HideSpotifySwitch.IsCheckedChanged += async (_, _) =>
+        {
+            var cfg = Program.Settings();
+            cfg.HideSpotify = HideSpotifySwitch.IsChecked == true;
+            Program.SaveSettings(cfg);
+            if (cfg.HideSpotify) await Task.Run(Spotify.HideWindow); // tuck it away right now
+            await RefreshMusic();
+        };
         FillPlaylists();
 
         AchRarity.ItemsSource = RarityOptions;
@@ -519,7 +529,13 @@ public partial class MainWindow : Window
     {
         if (musicBusy) return;
         musicBusy = true;
-        try { ApplyMusic(await Task.Run(Spotify.Status)); }
+        try
+        {
+            var (status, window) = await Task.Run(() => (Spotify.Status(), Spotify.WindowState()));
+            ApplyMusic(status);
+            SpotifyWindowButton.IsVisible = window != Spotify.SpotifyWindow.None;
+            SpotifyWindowButtonText.Text = window == Spotify.SpotifyWindow.Showing ? "Hide Spotify" : "Show Spotify";
+        }
         catch (Exception ex) { Program.LogError("music: " + ex.Message); }
         finally { musicBusy = false; }
     }
@@ -566,6 +582,14 @@ public partial class MainWindow : Window
         BigTitle.Text = "Starting Spotify in the background…";
         await Spotify.OpenAppAsync();
         Activate();
+        await RefreshMusic();
+    }
+
+    async void ToggleSpotifyWindow_Click(object? sender, RoutedEventArgs e)
+    {
+        if (Spotify.WindowState() == Spotify.SpotifyWindow.Showing) Spotify.HideWindow();
+        else Spotify.ShowWindow();
+        await Task.Delay(300);
         await RefreshMusic();
     }
 

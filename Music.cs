@@ -27,12 +27,11 @@ static partial class Spotify
 
     static NowPlaying WindowsStatus()
     {
-        var procs = Process.GetProcessesByName("Spotify");
-        if (procs.Length == 0) return new NowPlaying(false, false, "", "");
+        var pids = SpotifyPids();
+        if (pids.Count == 0) return new NowPlaying(false, false, "", "");
         // While a song plays the window title is "Artist - Song"; when paused it's just "Spotify ...".
-        var title = procs.Select(p => { try { return p.MainWindowTitle; } catch { return ""; } })
-                         .FirstOrDefault(t => !string.IsNullOrWhiteSpace(t)) ?? "";
-        foreach (var p in procs) p.Dispose();
+        // (Found directly, so it also works while the window is hidden.)
+        var title = Win.FindMainWindow(pids).Title;
         if (title.Length == 0 || title.StartsWith("Spotify", StringComparison.OrdinalIgnoreCase))
             return new NowPlaying(true, false, "", "");
         var cut = title.IndexOf(" - ", StringComparison.Ordinal);
@@ -126,27 +125,28 @@ static partial class Spotify
             }
             else
             {
-                // Windows: start Spotify minimized if needed, open the link (Spotify then jumps to the front),
-                // push its window back down, and press play.
+                // Windows: start Spotify in the background if needed, open the link (Spotify then jumps to
+                // the front), tuck its window away again, and press play.
+                bool hide = Program.Settings().HideSpotify;
                 bool wasRunning = Status().Running;
                 if (!wasRunning)
                 {
                     StartMinimizedWindows();
                     await WaitUntilRunning(TimeSpan.FromSeconds(10));
-                    await Task.Delay(2500); // let it finish loading
+                    await TuckAway(hide, TimeSpan.FromSeconds(2.5)); // let it finish loading
                 }
-                bool keepHidden = !wasRunning || !SpotifyWindowShowing();
+                bool tuck = !wasRunning || WindowState() != SpotifyWindow.Showing;
                 Process.Start(new ProcessStartInfo(uri) { UseShellExecute = true });
-                if (keepHidden) await MinimizeSpotifyWindow(TimeSpan.FromSeconds(4));
-                await Task.Delay(800);
+                if (tuck) await TuckAway(hide, TimeSpan.FromSeconds(4));
+                else await Task.Delay(800);
                 Send(Command.Play);
-                if (keepHidden) await MinimizeSpotifyWindow(TimeSpan.FromSeconds(1));
+                if (tuck) await TuckAway(hide, TimeSpan.FromSeconds(1));
             }
         }
         catch (Exception ex) { Program.LogError("spotify play: " + ex.Message); }
     }
 
-    /// Starts Spotify without showing its window.
+    /// Starts Spotify as a background process: no window (or minimized, if hiding is turned off).
     public static async Task OpenAppAsync()
     {
         try
@@ -157,13 +157,105 @@ static partial class Spotify
             {
                 StartMinimizedWindows();
                 await WaitUntilRunning(TimeSpan.FromSeconds(10));
-                await MinimizeSpotifyWindow(TimeSpan.FromSeconds(3));
+                await TuckAway(Program.Settings().HideSpotify, TimeSpan.FromSeconds(4));
             }
         }
         catch (Exception ex) { Program.LogError("spotify open: " + ex.Message); }
     }
 
-    // ---------- Windows window handling ----------
+    // ---------- Spotify's window (Windows) ----------
+
+    public enum SpotifyWindow { None, Hidden, Minimized, Showing }
+
+    static HashSet<int> SpotifyPids()
+    {
+        var ids = new HashSet<int>();
+        foreach (var p in Process.GetProcessesByName("Spotify")) { ids.Add(p.Id); p.Dispose(); }
+        return ids;
+    }
+
+    public static SpotifyWindow WindowState()
+    {
+        if (!Platform.Windows) return SpotifyWindow.None;
+        var h = Win.FindMainWindow(SpotifyPids()).Handle;
+        if (h == IntPtr.Zero) return SpotifyWindow.None;
+        if (!Win.IsWindowVisible(h)) return SpotifyWindow.Hidden;
+        return Win.IsIconic(h) ? SpotifyWindow.Minimized : SpotifyWindow.Showing;
+    }
+
+    /// Hides Spotify's window completely (it keeps playing as a background process).
+    public static void HideWindow()
+    {
+        var h = Win.FindMainWindow(SpotifyPids()).Handle;
+        if (h != IntPtr.Zero) Win.ShowWindow(h, Win.SW_HIDE);
+    }
+
+    /// Brings Spotify's window back.
+    public static void ShowWindow()
+    {
+        var h = Win.FindMainWindow(SpotifyPids()).Handle;
+        if (h == IntPtr.Zero) return;
+        Win.ShowWindow(h, Win.SW_SHOW);
+        Win.ShowWindow(h, Win.SW_RESTORE);
+        Win.SetForegroundWindow(h);
+    }
+
+    /// Watches for Spotify's window popping up and hides it (or minimizes it), without taking focus.
+    static async Task TuckAway(bool hide, TimeSpan watch)
+    {
+        var until = DateTime.Now + watch;
+        while (DateTime.Now < until)
+        {
+            var h = Win.FindMainWindow(SpotifyPids()).Handle;
+            if (h != IntPtr.Zero && Win.IsWindowVisible(h))
+            {
+                if (hide) Win.ShowWindow(h, Win.SW_HIDE);
+                else if (!Win.IsIconic(h)) Win.ShowWindow(h, Win.SW_SHOWMINNOACTIVE);
+            }
+            await Task.Delay(150);
+        }
+    }
+
+    /// Plain Win32 calls; EnumWindows also finds hidden windows (Process.MainWindowHandle doesn't).
+    static class Win
+    {
+        public const int SW_HIDE = 0, SW_SHOW = 5, SW_SHOWMINNOACTIVE = 7, SW_RESTORE = 9;
+
+        delegate bool EnumProc(IntPtr hWnd, IntPtr lParam);
+
+        public static (IntPtr Handle, string Title) FindMainWindow(HashSet<int> pids)
+        {
+            if (pids.Count == 0) return (IntPtr.Zero, "");
+            (IntPtr, string) found = (IntPtr.Zero, "");
+            EnumWindows((h, _) =>
+            {
+                GetWindowThreadProcessId(h, out var pid);
+                if (!pids.Contains((int)pid)) return true;
+                var cls = new System.Text.StringBuilder(64);
+                GetClassName(h, cls, cls.Capacity);
+                if (!cls.ToString().StartsWith("Chrome_WidgetWin", StringComparison.Ordinal)) return true;
+                int len = GetWindowTextLength(h);
+                if (len == 0) return true;
+                var title = new System.Text.StringBuilder(len + 1);
+                GetWindowText(h, title, title.Capacity);
+                found = (h, title.ToString());
+                return false; // first titled Spotify window is the main one
+            }, IntPtr.Zero);
+            return found;
+        }
+
+        [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc cb, IntPtr lParam);
+        [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetClassName(IntPtr hWnd, System.Text.StringBuilder s, int max);
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowTextLength(IntPtr hWnd);
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder s, int max);
+        [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int cmd);
+        [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
+        [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd);
+        [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+    }
+
+    // ---------- starting Spotify (Windows) ----------
 
     /// Spotify's own "--minimized" start option, through the Store app's launcher or the classic install.
     static void StartMinimizedWindows()
@@ -186,44 +278,6 @@ static partial class Spotify
         var until = DateTime.Now + max;
         while (DateTime.Now < until && !Status().Running) await Task.Delay(300);
     }
-
-    static IEnumerable<IntPtr> SpotifyWindows()
-    {
-        foreach (var p in Process.GetProcessesByName("Spotify"))
-        {
-            IntPtr h;
-            try { h = p.MainWindowHandle; } catch { h = IntPtr.Zero; }
-            p.Dispose();
-            if (h != IntPtr.Zero) yield return h;
-        }
-    }
-
-    static bool SpotifyWindowShowing() => SpotifyWindows().Any(h => IsWindowVisible(h) && !IsIconic(h));
-
-    /// Watches for Spotify's window popping up and minimizes it without taking focus.
-    static async Task MinimizeSpotifyWindow(TimeSpan watch)
-    {
-        const int SW_SHOWMINNOACTIVE = 7;
-        var until = DateTime.Now + watch;
-        while (DateTime.Now < until)
-        {
-            foreach (var h in SpotifyWindows())
-                if (IsWindowVisible(h) && !IsIconic(h)) ShowWindow(h, SW_SHOWMINNOACTIVE);
-            await Task.Delay(150);
-        }
-    }
-
-    [LibraryImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static partial bool ShowWindow(IntPtr hWnd, int cmd);
-
-    [LibraryImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static partial bool IsWindowVisible(IntPtr hWnd);
-
-    [LibraryImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    private static partial bool IsIconic(IntPtr hWnd);
 
     // ---------- helpers ----------
 

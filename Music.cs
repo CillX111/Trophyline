@@ -107,8 +107,11 @@ static partial class Spotify
             var uri = $"spotify:{p.Kind}:{p.Id}";
             if (Platform.Mac)
             {
-                Run("open", "-a", "Spotify");
-                await Task.Delay(1500);
+                if (!Status().Running)
+                {
+                    Run("open", "-g", "-j", "-a", "Spotify"); // -g: stay in background, -j: start hidden
+                    await Task.Delay(3000);
+                }
                 Run("osascript", "-e", $"tell application \"Spotify\" to play track \"{uri}\"");
             }
             else if (Platform.Linux)
@@ -123,26 +126,104 @@ static partial class Spotify
             }
             else
             {
-                // Windows: opening the link shows the playlist in Spotify; then press play.
+                // Windows: start Spotify minimized if needed, open the link (Spotify then jumps to the front),
+                // push its window back down, and press play.
                 bool wasRunning = Status().Running;
+                if (!wasRunning)
+                {
+                    StartMinimizedWindows();
+                    await WaitUntilRunning(TimeSpan.FromSeconds(10));
+                    await Task.Delay(2500); // let it finish loading
+                }
+                bool keepHidden = !wasRunning || !SpotifyWindowShowing();
                 Process.Start(new ProcessStartInfo(uri) { UseShellExecute = true });
-                await Task.Delay(wasRunning ? 1500 : 5000);
+                if (keepHidden) await MinimizeSpotifyWindow(TimeSpan.FromSeconds(4));
+                await Task.Delay(800);
                 Send(Command.Play);
+                if (keepHidden) await MinimizeSpotifyWindow(TimeSpan.FromSeconds(1));
             }
         }
         catch (Exception ex) { Program.LogError("spotify play: " + ex.Message); }
     }
 
-    public static void OpenApp()
+    /// Starts Spotify without showing its window.
+    public static async Task OpenAppAsync()
     {
         try
         {
-            if (Platform.Mac) Run("open", "-a", "Spotify");
+            if (Platform.Mac) Run("open", "-g", "-j", "-a", "Spotify");
             else if (Platform.Linux) Process.Start(new ProcessStartInfo("spotify") { UseShellExecute = false });
-            else Process.Start(new ProcessStartInfo("spotify:") { UseShellExecute = true });
+            else
+            {
+                StartMinimizedWindows();
+                await WaitUntilRunning(TimeSpan.FromSeconds(10));
+                await MinimizeSpotifyWindow(TimeSpan.FromSeconds(3));
+            }
         }
         catch (Exception ex) { Program.LogError("spotify open: " + ex.Message); }
     }
+
+    // ---------- Windows window handling ----------
+
+    /// Spotify's own "--minimized" start option, through the Store app's launcher or the classic install.
+    static void StartMinimizedWindows()
+    {
+        var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        var roaming = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        var exe = new[]
+        {
+            Path.Combine(local, "Microsoft", "WindowsApps", "Spotify.exe"), // Microsoft Store version
+            Path.Combine(roaming, "Spotify", "Spotify.exe"),                 // spotify.com installer
+        }.FirstOrDefault(File.Exists);
+        if (exe != null)
+            Process.Start(new ProcessStartInfo(exe, "--minimized") { UseShellExecute = true, WindowStyle = ProcessWindowStyle.Minimized });
+        else
+            Process.Start(new ProcessStartInfo("spotify:") { UseShellExecute = true });
+    }
+
+    static async Task WaitUntilRunning(TimeSpan max)
+    {
+        var until = DateTime.Now + max;
+        while (DateTime.Now < until && !Status().Running) await Task.Delay(300);
+    }
+
+    static IEnumerable<IntPtr> SpotifyWindows()
+    {
+        foreach (var p in Process.GetProcessesByName("Spotify"))
+        {
+            IntPtr h;
+            try { h = p.MainWindowHandle; } catch { h = IntPtr.Zero; }
+            p.Dispose();
+            if (h != IntPtr.Zero) yield return h;
+        }
+    }
+
+    static bool SpotifyWindowShowing() => SpotifyWindows().Any(h => IsWindowVisible(h) && !IsIconic(h));
+
+    /// Watches for Spotify's window popping up and minimizes it without taking focus.
+    static async Task MinimizeSpotifyWindow(TimeSpan watch)
+    {
+        const int SW_SHOWMINNOACTIVE = 7;
+        var until = DateTime.Now + watch;
+        while (DateTime.Now < until)
+        {
+            foreach (var h in SpotifyWindows())
+                if (IsWindowVisible(h) && !IsIconic(h)) ShowWindow(h, SW_SHOWMINNOACTIVE);
+            await Task.Delay(150);
+        }
+    }
+
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool ShowWindow(IntPtr hWnd, int cmd);
+
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool IsWindowVisible(IntPtr hWnd);
+
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool IsIconic(IntPtr hWnd);
 
     // ---------- helpers ----------
 

@@ -562,8 +562,10 @@ public partial class MainWindow : Window
 
     async void OpenSpotify_Click(object? sender, RoutedEventArgs e)
     {
-        Spotify.OpenApp();
-        await Task.Delay(3000);
+        MiniTitle.Text = "Starting Spotify…";
+        BigTitle.Text = "Starting Spotify in the background…";
+        await Spotify.OpenAppAsync();
+        Activate();
         await RefreshMusic();
     }
 
@@ -606,9 +608,10 @@ public partial class MainWindow : Window
         if ((sender as Control)?.DataContext is not PlaylistVM vm) return;
         AddHint.Text = $"Starting \"{vm.Title}\" in Spotify…";
         await Spotify.PlayAsync(vm.P);
+        Activate(); // keep Trophyline in front; Spotify stays minimized
         await RefreshMusic();
         AddHint.Text = Platform.Windows
-            ? $"Playing \"{vm.Title}\". If Spotify kept playing something else, press play once in Spotify."
+            ? $"Playing \"{vm.Title}\" (Spotify stays minimized). If it kept playing something else, press play once."
             : $"Playing \"{vm.Title}\".";
     }
 

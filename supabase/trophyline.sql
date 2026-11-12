@@ -143,6 +143,28 @@ alter table openid_nonces enable row level security;
 alter table reports enable row level security;
 revoke all on steam_games, steam_unlocks, season_hours, openid_nonces, reports from anon, authenticated;
 
+-- game names, for the "best games" on profiles (from Steam's list of owned games)
+alter table steam_games add column if not exists name text not null default '';
+
+-- linking with a name code (for networks that block Steam's login page): the player puts the code in
+-- their Steam profile name for a moment, and the server function sees it there through the Steam Web API
+create table if not exists steam_codes (
+  player   text primary key references players(id) on delete cascade,
+  steam_id text not null,
+  code     text not null,
+  created  bigint not null
+);
+alter table steam_codes enable row level security;
+revoke all on steam_codes from anon, authenticated;
+
+-- Numbers that Steam never confirmed could have been typed in by hand, so they're cleared.
+-- Only the server (tl_srv_apply) sets levels, XP, game counts, best games and latest unlocks.
+update players set xp = 0, level = 1, rank = 'Rookie', perfect = 0, over75 = 0, unlocked = 0, games = 0, hours = 0
+where verified_at = 0 and (xp <> 0 or level <> 1 or perfect <> 0 or over75 <> 0 or unlocked <> 0 or games <> 0 or hours <> 0);
+update players set profile = profile - 'topGames' - 'recent'
+where (profile ? 'topGames' or profile ? 'recent') and not coalesce(profile->>'fromSteam', '') = '1';
+delete from season_scores ss using players p where p.id = ss.player and p.verified_at = 0;
+
 alter table players enable row level security;
 alter table season_scores enable row level security;
 alter table messages enable row level security;
@@ -258,13 +280,16 @@ declare
   v_now bigint := tl_now();
   v_old_updated bigint;
   v_banned boolean;
-  v_profile jsonb := coalesce(p->'profile', '{}'::jsonb);
+  v_icon text := tl_clean(p->'profile'->>'icon', 24);
+  v_links jsonb := '{}'::jsonb;
+  v_level int;
+  k text;
+  v text;
   cur jsonb := tl_season();
 begin
   if v_id is null or v_id !~ '^[a-z0-9]{16,40}$' then raise exception 'bad id'; end if;
   if v_secret is null or length(v_secret) < 24 or length(v_secret) > 128 then raise exception 'bad secret'; end if;
   if v_name = '' then raise exception 'name required'; end if;
-  if length(v_profile::text) > 24000 then raise exception 'profile too big'; end if;
 
   -- only an existing account can upload (create one with tl_register)
   select updated, banned into v_old_updated, v_banned from players where id = v_id;
@@ -273,14 +298,18 @@ begin
   if tl_auth(v_id, v_secret) is null then raise exception 'not your profile'; end if;
   if v_now - v_old_updated < 10 then raise exception 'too often'; end if;
 
-  -- name and profile always; the numbers only until Steam has verified them (then only Steam sets them).
-  -- Season XP is never taken from the app: the Steam check works it out.
-  update players set name = v_name, profile = v_profile, updated = v_now where id = v_id;
-  update players set
-    level = tl_int(p->>'level', 10000), rank = coalesce(nullif(tl_clean(p->>'rank', 24), ''), 'Rookie'),
-    xp = tl_int(p->>'xp', 50000000), perfect = tl_int(p->>'perfect', 100000), over75 = tl_int(p->>'over75', 100000),
-    unlocked = tl_int(p->>'unlocked', 10000000), games = tl_int(p->>'games', 100000), hours = tl_int(p->>'hours', 10000000)
-  where id = v_id and verified_at = 0;
+  -- Only what the player chooses: display name, equipped icon and profile links. Levels, XP, game counts,
+  -- best games and latest unlocks are never taken from the app; the Steam check sets them (tl_srv_apply).
+  select level into v_level from players where id = v_id;
+  if v_icon <> '' and not tl_icon_ok(v_icon, v_level) then v_icon := ''; end if;
+  if jsonb_typeof(p->'profile'->'links') = 'object' then
+    for k, v in select key, value from jsonb_each_text(p->'profile'->'links') limit 12 loop
+      if k ~ '^[a-z]{2,20}$' and length(v) between 1 and 64 then v_links := v_links || jsonb_build_object(k, tl_clean(v, 64)); end if;
+    end loop;
+  end if;
+  update players set name = v_name, updated = v_now,
+                     profile = (profile - 'icon' - 'links') || jsonb_build_object('icon', v_icon, 'links', v_links)
+  where id = v_id;
   update sessions set used = v_now where token_hash = tl_hash(v_secret);
 
   return jsonb_build_object('ok', true, 'season', cur);
@@ -403,10 +432,19 @@ begin
   select * into pl from players where id = p_id and not banned;
   if pl.id is null then raise exception 'no such player'; end if;
   select xp into sxp from season_scores where season = cur->>'id' and player = p_id;
+  -- numbers only for players Steam has confirmed (and the cheat check hasn't paused): nothing unchecked is shown
+  if not pl.ranked then
+    return jsonb_build_object(
+      'id', pl.id, 'name', pl.name, 'level', 1, 'rank', 'Rookie', 'xp', 0, 'perfect', 0, 'over75', 0, 'unlocked', 0,
+      'games', 0, 'hours', 0, 'profile', pl.profile - 'topGames' - 'recent',
+      'created', pl.created, 'updated', pl.verified_at, 'avatar', pl.avatar_ver,
+      'verified', false, 'verified_at', pl.verified_at, 'linked', pl.steam_id is not null,
+      'season', cur || jsonb_build_object('xp', 0), 'places', null);
+  end if;
   return jsonb_build_object(
     'id', pl.id, 'name', pl.name, 'level', pl.level, 'rank', pl.rank, 'xp', pl.xp, 'perfect', pl.perfect,
     'over75', pl.over75, 'unlocked', pl.unlocked, 'games', pl.games, 'hours', pl.hours, 'profile', pl.profile,
-    'created', pl.created, 'updated', pl.updated, 'avatar', pl.avatar_ver,
+    'created', pl.created, 'updated', pl.verified_at, 'avatar', pl.avatar_ver, 'linked', true,
     'verified', pl.ranked, 'verified_at', pl.verified_at,
     'season', cur || jsonb_build_object('xp', case when pl.ranked then coalesce(sxp, 0) else 0 end),
     'places', case when pl.ranked then jsonb_build_object(
@@ -705,6 +743,7 @@ begin
                        flags = '', approve = false, cleared_at = 0
     where id = me;
   end if;
+  delete from steam_codes where player = me;
   return jsonb_build_object('ok', true, 'steam_id', p_steam_id);
 end $$;
 
@@ -746,11 +785,12 @@ begin
   end if;
 
   -- playtime of every game the account owns
-  insert into steam_games (player, appid, minutes)
-  select distinct on ((e->>'a')::int) me, (e->>'a')::int, tl_int(e->>'m', 100000000)::int
+  insert into steam_games (player, appid, minutes, name)
+  select distinct on ((e->>'a')::int) me, (e->>'a')::int, tl_int(e->>'m', 100000000)::int, left(tl_clean(e->>'n', 120), 120)
   from jsonb_array_elements(coalesce(p->'owned', '[]'::jsonb)) e
   where (e->>'a') ~ '^[0-9]{1,9}$'
-  on conflict (player, appid) do update set minutes = excluded.minutes;
+  on conflict (player, appid) do update set minutes = excluded.minutes,
+    name = case when excluded.name <> '' then excluded.name else steam_games.name end;
 
   -- achievements of the games read this time
   for g in select value from jsonb_array_elements(coalesce(p->'games', '[]'::jsonb)) loop
@@ -830,10 +870,94 @@ begin
     flags = v_flags, approve = false, cleared_at = v_cleared
   where id = me;
 
+  -- best games on the profile, from Steam's numbers (latest unlocks are added by tl_srv_profile)
+  update players set profile = profile || jsonb_build_object('fromSteam', '1', 'topGames', coalesce((
+    select jsonb_agg(jsonb_build_object('appId', appid::text, 'name', case when name <> '' then name else 'App ' || appid end,
+                                        'unlocked', achieved, 'total', total)
+                     order by (achieved >= total) desc, (achieved::real / total) desc, achieved desc)
+    from (select * from steam_games where player = me and total > 0 and achieved > 0
+          order by (achieved >= total) desc, (achieved::real / total) desc, achieved desc limit 12) t), '[]'::jsonb))
+  where id = me;
+
   return jsonb_build_object('ok', true, 'state', case when is_partial then 'checking' else 'ok' end, 'partial', is_partial,
     'xp', v_xp, 'level', lvl, 'perfect', v_perfect, 'over75', v_over75, 'unlocked', v_unlocked,
-    'games', v_games, 'hours', v_hours, 'season_xp', sxp, 'flagged', v_flags <> '');
+    'games', v_games, 'hours', v_hours, 'season_xp', sxp, 'flagged', v_flags <> '',
+    -- the newest unlocks: the server function looks up their names and icons, then calls tl_srv_profile
+    'latest', coalesce((select jsonb_agg(jsonb_build_array(appid, name, time, xp) order by time desc)
+                        from (select appid, name, time, xp from steam_unlocks where player = me and time > 0
+                              order by time desc limit 10) l), '[]'::jsonb));
 end $$;
+
+-- the latest unlocks on the profile, with names and icons the server function looked up on Steam.
+-- Only unlocks that Steam reported for this player are accepted.
+create or replace function tl_srv_profile(p_id text, p_recent jsonb) returns jsonb language plpgsql security definer
+set search_path = public, extensions as $$
+declare
+  out jsonb;
+begin
+  select coalesce(jsonb_agg(jsonb_build_object(
+           'appId', u.appid::text, 'game', coalesce(nullif(g.name, ''), 'App ' || u.appid),
+           'name', coalesce(nullif(tl_clean(e->>'name', 120), ''), u.name), 'time', u.time,
+           'rarity', case when e->>'rarity' ~ '^\d+(\.\d+)?$' then round((e->>'rarity')::numeric, 1) end,
+           'icon', left(regexp_replace(coalesce(e->>'icon', ''), '[^A-Za-z0-9._-]', '', 'g'), 120))
+         order by u.time desc), '[]'::jsonb)
+  into out
+  from jsonb_array_elements(case when jsonb_typeof(p_recent) = 'array' then p_recent else '[]'::jsonb end) e
+  join steam_unlocks u on u.player = p_id and u.appid::text = e->>'appId' and u.name = e->>'api'
+  left join steam_games g on g.player = u.player and g.appid = u.appid;
+  update players set profile = profile || jsonb_build_object('fromSteam', '1', 'recent', coalesce(out, '[]'::jsonb)) where id = p_id;
+  return jsonb_build_object('ok', true, 'recent', jsonb_array_length(coalesce(out, '[]'::jsonb)));
+end $$;
+
+-- ---------- linking with a name code ----------
+
+-- the app asks for a code for the Steam account it shows; the player puts it in their Steam profile name
+create or replace function tl_code_begin(p_id text, p_secret text, p_steam_id text) returns jsonb
+language plpgsql security definer
+set search_path = public, extensions as $$
+declare
+  me text := tl_auth(p_id, p_secret);
+  v_code text := 'TL-' || upper(substr(tl_token(), 1, 6));
+begin
+  if me is null then return jsonb_build_object('error', 'Log in to your Trophyline account again'); end if;
+  if coalesce(p_steam_id, '') !~ '^7656119[0-9]{10}$' then return jsonb_build_object('error', 'Pick a Steam account first'); end if;
+  if exists (select 1 from players where steam_id = p_steam_id and id <> me) then
+    return jsonb_build_object('error', 'This Steam account is already linked to another Trophyline account');
+  end if;
+  insert into steam_codes (player, steam_id, code, created) values (me, p_steam_id, v_code, tl_now())
+  on conflict (player) do update set steam_id = excluded.steam_id, code = excluded.code, created = excluded.created;
+  return jsonb_build_object('ok', true, 'code', v_code, 'steam_id', p_steam_id, 'expires', tl_now() + 1200);
+end $$;
+
+-- for the server function: the code it should look for (codes work for 20 minutes)
+create or replace function tl_srv_code(p_id text, p_secret text) returns jsonb language plpgsql security definer
+set search_path = public, extensions as $$
+declare
+  me text := tl_auth(p_id, p_secret);
+  c steam_codes;
+begin
+  if me is null then return jsonb_build_object('error', 'Log in to your Trophyline account again'); end if;
+  delete from steam_codes where created < tl_now() - 1200;
+  select * into c from steam_codes where player = me;
+  if c.player is null then return jsonb_build_object('error', 'The code ran out. Get a new one.'); end if;
+  return jsonb_build_object('ok', true, 'steam_id', c.steam_id, 'code', c.code);
+end $$;
+
+-- coins earned up to a level (50 + 10 x level for every level from 2 up), as in Shop.cs
+create or replace function tl_coins(p_level int) returns bigint language sql immutable as $$
+  select case when p_level < 2 then 0
+              else 50 * (p_level - 1)::bigint + 10 * ((p_level::bigint * (p_level + 1)) / 2 - 1) end
+$$;
+
+-- a shop icon only shows if the Steam-checked level could have bought it
+create or replace function tl_icon_ok(p_icon text, p_level int) returns boolean language sql immutable as $$
+  select exists (select 1 from (values
+      ('controller', 300, 0), ('star', 300, 0), ('cat', 300, 0), ('pizza', 300, 0), ('cactus', 300, 0), ('dice', 300, 0),
+      ('ghost', 800, 0), ('alien', 800, 0), ('fox', 800, 0), ('rocket', 800, 0), ('ninja', 800, 0), ('target', 800, 0),
+      ('fire', 1600, 10), ('skull', 1600, 10), ('robot', 1600, 10), ('wolf', 1600, 15), ('swords', 1600, 15), ('lightning', 1600, 15),
+      ('dragon', 3000, 20), ('crown', 3000, 25), ('diamond', 3000, 30), ('trophy', 3000, 40)) i(id, price, min_level)
+    where i.id = p_icon and coalesce(p_level, 1) >= i.min_level and tl_coins(coalesce(p_level, 1)) >= i.price)
+$$;
 
 -- what the app shows in Settings
 create or replace function tl_verify_status(p_id text, p_secret text) returns jsonb language plpgsql stable security definer
@@ -886,8 +1010,9 @@ grant execute on function
   tl_set_avatar(text, text, text), tl_avatar(text),
   tl_register(text, text), tl_login(text, text), tl_claim(text, text, text, text),
   tl_logout(text, text), tl_change_password(text, text, text, text),
-  tl_verify_status(text, text), tl_report(text, text, text, text)
+  tl_verify_status(text, text), tl_report(text, text, text, text), tl_code_begin(text, text, text)
 to anon, authenticated;
 -- only the server function (service role) may store Steam results
-grant execute on function tl_srv_begin(text, text), tl_srv_link(text, text, text, text), tl_srv_apply(text, jsonb)
+grant execute on function tl_srv_begin(text, text), tl_srv_link(text, text, text, text), tl_srv_apply(text, jsonb),
+  tl_srv_profile(text, jsonb), tl_srv_code(text, text)
 to service_role;

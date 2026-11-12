@@ -880,7 +880,7 @@
 
                     <TextBlock Text="Trophyline account" Classes="section" Margin="0,20,0,4"/>
                     <TextBlock Classes="muted" FontSize="13" Margin="0,0,0,14" TextWrapping="Wrap"
-                               Text="An account puts you on the online leaderboards and in the chat, and lets you log in on any computer. Shared while you're logged in: your display name, level, XP, season XP, game counts, equipped icon, top games and latest unlocks. Never your Steam login."/>
+                               Text="An account lets you chat and log in on any computer. To get on the leaderboards, link your Steam account below: the Trophyline server then reads your games and achievements from Steam itself, so nobody can fake their numbers. Shared: your display name, equipped icon, profile links, and what Steam says about your games. Never your Steam login."/>
                     <Border Classes="card" Padding="16,12" Margin="0,0,0,10">
                         <StackPanel Spacing="10">
                             <ToggleSwitch x:Name="OnlineSwitch" IsVisible="False"/>
@@ -921,10 +921,13 @@
                                     <StackPanel Spacing="8">
                                         <TextBlock x:Name="VerifyTitle" FontWeight="SemiBold" TextWrapping="Wrap" Text="Steam-verified scores"/>
                                         <TextBlock x:Name="VerifyText" FontSize="13" TextWrapping="Wrap"
-                                                   Text="Only Steam-verified players are ranked on the leaderboards. Link your Steam account and the Trophyline server reads your achievements from Steam itself, so nobody can fake them."/>
+                                                   Text="Only Steam-verified players are ranked or show any numbers. Link your Steam account and the Trophyline server reads your achievements from Steam itself, so nobody can fake them."/>
                                         <StackPanel Orientation="Horizontal" Spacing="10">
                                             <Button x:Name="LinkSteamButton" Classes="primary" Click="LinkSteam_Click" MinHeight="0" Padding="0">
                                                 <TextBlock x:Name="LinkSteamText" Text="Link Steam account" Margin="0,9"/>
+                                            </Button>
+                                            <Button x:Name="SteamCodeButton" Classes="pill" Click="SteamCode_Click" VerticalAlignment="Center">
+                                                <TextBlock Text="Use a name code instead"/>
                                             </Button>
                                             <Button x:Name="VerifyButton" Classes="pill" Click="VerifyNow_Click" VerticalAlignment="Center" IsVisible="False">
                                                 <TextBlock Text="Check now"/>
@@ -932,7 +935,7 @@
                                         </StackPanel>
                                         <TextBlock x:Name="VerifyMsg" FontSize="12" TextWrapping="Wrap" IsVisible="False"/>
                                         <TextBlock Classes="muted" FontSize="12" TextWrapping="Wrap"
-                                                   Text="Steam only shares your achievements if your game details are public: in Steam, open your profile → Edit Profile → Privacy Settings → Game details: Public. Linking opens Steam's own login page; Trophyline never sees your Steam password."/>
+                                                   Text="Steam only shares your achievements if your game details are public: in Steam, open your profile → Edit Profile → Privacy Settings → Game details: Public. Linking opens Steam's own login page; Trophyline never sees your Steam password. If Steam's website is blocked on your network, use a name code instead: you put a short code in your Steam profile name for a minute."/>
                                     </StackPanel>
                                 </Border>
                             </StackPanel>

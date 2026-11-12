@@ -59,7 +59,8 @@ public partial class App : Application
             {
                 await w.Ready;
                 w.NavigateForSnapshot(a.Length > 2 ? a[2] : "overview", a.Length > 3 && a[3].Length > 0 ? a[3] : null);
-                await Task.Delay(3500); // let animations and web icons settle
+                // let animations and web icons settle (TROPHYLINE_SNAPSHOT_WAIT=seconds for slower dev checks)
+                await Task.Delay(int.TryParse(Environment.GetEnvironmentVariable("TROPHYLINE_SNAPSHOT_WAIT"), out var wait) ? wait * 1000 : 3500);
                 var size = new PixelSize((int)w.Bounds.Width, (int)w.Bounds.Height);
                 using (var rtb = new RenderTargetBitmap(size, new Vector(96, 96)))
                 {

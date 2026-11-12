@@ -82,17 +82,20 @@ The files aren't signed by Microsoft or Apple, so the first launch shows a warni
   computer; Log out keeps your account and places. Passwords are stored only as a salted
   hash, 5 wrong tries lock the account for 5 minutes, and there's no email, so a lost
   password can't be reset. Profiles made before 1.7.0 get a username and password once.
-  Online, Trophyline shares your chosen name, level, XP, season XP, game counts, equipped
-  icon, top games, latest unlocks and the chat messages you write. Never your Steam login.
+  Online, the app only sends your chosen name, equipped icon, profile links and the chat
+  messages you write. Never your Steam login.
   Delete account removes all of it from the server. The server is a Supabase project set
   up by [`supabase/trophyline.sql`](supabase/trophyline.sql): the tables can't be read
   directly, only through its `tl_*` functions, and every change needs your login.
-- **Only Steam-verified players are ranked** (Settings → Trophyline account → Link Steam
-  account). Linking uses Steam's own login page; the Trophyline server confirms it with
-  Steam, then reads that account's games and achievements from Steam's Web API itself and
-  re-checks every 6 hours. Leaderboard numbers come only from there, so editing files on
+- **Only numbers from Steam are shown online** (Settings → Trophyline account → Link Steam
+  account). Linking uses Steam's own login page, or a **name code** for networks that block
+  it (you put a short code like `TL-3F9A21` in your Steam profile name for a minute). The
+  Trophyline server confirms it with Steam, then reads that account's games and achievements
+  from Steam's Web API itself and re-checks every 6 hours. Levels, XP, season XP, game
+  counts, best games and latest unlocks online all come only from there, so editing files on
   your computer changes nothing. Your Steam profile's **Game details** must be public.
-  Leaderboard XP doesn't include tracked sessions (Steam doesn't know about them).
+  Online XP doesn't include tracked sessions (Steam doesn't know about them), and a shop
+  icon only shows if your Steam-checked level could have bought it.
 - **Cheat checks**: the server pauses a player (not ranked, until the owner looks) when
   almost a whole game was unlocked in one second, when achievements appear in 3+ games
   within one minute, or when a game with no playtime has achievements. These are typical of
@@ -100,7 +103,8 @@ The files aren't signed by Microsoft or Apple, so the first launch shows a warni
 - **Moderation**: players can **Report** a profile. In Supabase → Table Editor:
   `reports` lists the reports; in `players`, tick `approve` to clear a paused player, or
   `banned` to remove someone from leaderboards, profiles and chat.
-- Unverified profiles still show their (unchecked) numbers, marked "not verified".
+- Profiles that aren't Steam-verified (or are paused) show no numbers at all. Numbers
+  uploaded before 1.8.0 were cleared, because they were never checked.
 - Reads the files Steam already keeps on your computer: achievements
   (`appcache/stats`), playtime (`userdata/…/localconfig.vdf`), installed games and the
   artwork Steam downloaded. No Steam API key or public profile needed.

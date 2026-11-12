@@ -59,7 +59,7 @@ static class Popup
             if (seen == 0 && !Online.Enabled) return null; // the window sets the starting level the first time it opens
             var data = SteamData.Load(Program.ReadLanguage());
             var r = Xp.Compute(data.Games, SessionLog.Load());
-            PendingUpload = Task.Run(() => Online.Upload(data.Games, r, force: true)); // keep the leaderboards current
+            PendingUpload = Task.Run(() => Online.Upload(force: true)); // profile, and the Steam check when it's due
             if (seen == 0 || r.Level <= seen) return null;
             Xp.MarkSeen(r.Level);
             return new PopupItem(LevelUpId, Xp.RankFor(r.Level).Title, $"Level {r.Level}", $"{r.Total:N0} XP in total", "", null);

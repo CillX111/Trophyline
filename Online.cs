@@ -182,57 +182,25 @@ static class Online
 
     static DateTime lastUpload;
 
-    /// Sends your current numbers. Returns an error text, or null when it worked (or was skipped).
-    public static async Task<string?> Upload(IEnumerable<GameInfo> gameList, Xp.Result xp, bool force = false)
+    /// Sends what you choose yourself: display name, equipped icon and profile links. No numbers: your
+    /// level, XP, games, best games and latest unlocks are read by the server from Steam (the Steam check),
+    /// so nothing on this computer can change them. Returns an error text, or null when it worked (or was skipped).
+    public static async Task<string?> Upload(bool force = false)
     {
         if (!Enabled) return null;
         if (!force && DateTime.UtcNow - lastUpload < TimeSpan.FromMinutes(2)) return null;
-        var cfg = Program.Settings();
-        // one online profile belongs to one Steam account: another account's numbers never overwrite it
-        var steamId = SteamAccounts.Current()?.Id64 ?? "";
-        if (steamId.Length > 0 && cfg.OnlineSteamAccount.Length == 0) { cfg.OnlineSteamAccount = steamId; Program.SaveSettings(cfg); }
-        else if (steamId.Length > 0 && cfg.OnlineSteamAccount != steamId)
-            return "Your online profile belongs to a different Steam account, so nothing was uploaded. Switch back to that account, or delete the online account (bottom of Settings) and join again with this one.";
         lastUpload = DateTime.UtcNow;
-        var all = gameList.ToList();
-        var games = all.Where(g => g.Total > 0).ToList();
-        var season = Season.Current;
+        var cfg = Program.Settings();
         var shop = Shop.Load();
-
-        var top = games.Where(g => g.UnlockedCount > 0)
-            .OrderByDescending(g => g.Perfect).ThenByDescending(g => g.Completion).ThenByDescending(g => g.UnlockedCount)
-            .Take(12)
-            .Select(g => (JsonNode)new JsonObject { ["appId"] = g.AppId, ["name"] = g.Name, ["unlocked"] = g.UnlockedCount, ["total"] = g.Total });
-        var recent = games.SelectMany(g => g.Achievements.Where(a => a.Unlocked && a.Time != null).Select(a => (g, a)))
-            .OrderByDescending(x => x.a.Time).Take(10)
-            .Select(x => (JsonNode)new JsonObject
-            {
-                ["appId"] = x.g.AppId, ["game"] = x.g.Name, ["name"] = x.a.Name, ["time"] = x.a.Time,
-                ["rarity"] = x.a.Rarity is double r ? Math.Round(r, 1) : null, ["icon"] = x.a.Icon,
-            });
-
         var p = new JsonObject
         {
             ["id"] = cfg.OnlineId,
             ["secret"] = cfg.OnlineSecret,
             ["name"] = cfg.OnlineName,
-            ["level"] = xp.Level,
-            ["rank"] = Xp.RankFor(xp.Level).Title,
-            ["xp"] = xp.Total,
-            ["perfect"] = games.Count(g => g.Perfect),
-            ["over75"] = games.Count(g => g.Completion >= 0.75),
-            ["unlocked"] = games.Sum(g => g.UnlockedCount),
-            ["games"] = games.Count(g => g.UnlockedCount > 0),
-            ["hours"] = all.Sum(g => g.PlaytimeMinutes) / 60,
-            ["seasons"] = new JsonArray(
-                new JsonObject { ["id"] = season.Id, ["xp"] = xp.SeasonXp(season) },
-                new JsonObject { ["id"] = season.Previous.Id, ["xp"] = xp.SeasonXp(season.Previous) }),
             ["profile"] = new JsonObject
             {
                 ["icon"] = shop.Owned.Contains(shop.Equipped) ? shop.Equipped : "",
                 ["links"] = Links(cfg),
-                ["topGames"] = new JsonArray(top.ToArray()),
-                ["recent"] = new JsonArray(recent.ToArray()),
             },
         };
         var (_, err) = await Rpc("tl_upsert", new JsonObject { ["p"] = p });
@@ -361,6 +329,35 @@ static class Online
         cfg.LastVerify = 0;
         Program.SaveSettings(cfg);
         return null;
+    }
+
+    /// Linking with a name code (for networks that block Steam's login page): returns the code to put in
+    /// the Steam profile name of this account, or an error.
+    public static async Task<(string? Code, string? Error)> StartSteamCode(string steamId64)
+    {
+        if (!LoggedIn || NeedsLogin) return (null, "Log in to your Trophyline account first.");
+        var args = Me();
+        args["p_steam_id"] = steamId64;
+        var (r, err) = await Rpc("tl_code_begin", args);
+        if (err != null) return (null, err);
+        if (r?["error"]?.GetValue<string>() is string e) return (null, e);
+        return (r?["code"]?.GetValue<string>(), null);
+    }
+
+    /// Asks the server to look for the code in the Steam profile name. (true, null) once linked;
+    /// (false, null) while the name doesn't have it yet; (false, error) when something's wrong.
+    public static async Task<(bool Linked, string? Error)> CheckSteamCode()
+    {
+        var cfg = Program.Settings();
+        var (r, err) = await CallFunction(new JsonObject { ["action"] = "code", ["id"] = cfg.OnlineId, ["secret"] = cfg.OnlineSecret });
+        if (err != null) return (false, err);
+        if (r?["linked"]?.GetValue<bool>() != true) return (false, null);
+        cfg = Program.Settings();
+        cfg.VerifiedSteam = r["steam_id"]?.GetValue<string>() ?? "";
+        cfg.OnlineSteamAccount = cfg.VerifiedSteam;
+        cfg.LastVerify = 0;
+        Program.SaveSettings(cfg);
+        return (true, null);
     }
 
     static readonly SemaphoreSlim verifying = new(1, 1);

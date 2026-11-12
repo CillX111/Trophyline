@@ -4,6 +4,8 @@
 //   link   - confirms a "Sign in with Steam" with Steam itself, then links that Steam account
 //   verify - asks Steam (with the server owner's Steam Web API key) which games and achievements
 //            the linked account really has, and stores that as the player's verified numbers
+//   code   - links a Steam account by a code the player put in their Steam profile name
+//            (for networks that block Steam's login page)
 // Players' computers never send their own numbers here, so editing local files changes nothing.
 //
 // Setup (Supabase dashboard): Edge Functions -> Deploy a new function -> Via Editor, name it
@@ -208,12 +210,58 @@ async function verify(body: any): Promise<any> {
   const result = await db("tl_srv_apply", {
     p_id: start.id,
     p: {
-      owned: list.map((g) => ({ a: g.appid, m: g.playtime_forever ?? 0 })),
+      owned: list.map((g) => ({ a: g.appid, m: g.playtime_forever ?? 0, n: typeof g.name === "string" ? g.name.slice(0, 120) : "" })),
       games,
       partial: todo.length > batch.length,
     },
   });
+  if (result?.ok && Array.isArray(result.latest)) await latestUnlocks(start.id, result.latest, k);
+  delete result?.latest;
   return { ...result, left: Math.max(0, todo.length - batch.length) };
+}
+
+/** Names, icons and rarity for the newest unlocks on the profile (Steam's own names, never the app's). */
+async function latestUnlocks(id: string, latest: [number, string, number, number][], k: string): Promise<void> {
+  const apps = [...new Set(latest.map((l) => l[0]))].slice(0, 10);
+  const info: Record<string, { name?: string; icon?: string; pct?: number }> = {};
+  await pool(apps, PARALLEL, async (appid) => {
+    try {
+      const [schema, pct] = await Promise.all([
+        steam(`/ISteamUserStats/GetSchemaForGame/v2/?key=${k}&appid=${appid}&l=english&format=json`),
+        steam(`/ISteamUserStats/GetGlobalAchievementPercentagesForApp/v2/?gameid=${appid}&format=json`),
+      ]);
+      for (const a of schema.body?.game?.availableGameStats?.achievements ?? [])
+        if (typeof a.name === "string")
+          info[`${appid}/${a.name}`] = { name: String(a.displayName ?? a.name), icon: String(a.icon ?? "").split("/").pop() };
+      for (const r of pct.body?.achievementpercentages?.achievements ?? []) {
+        const v = Number(r.percent);
+        if (typeof r.name === "string" && Number.isFinite(v)) (info[`${appid}/${r.name}`] ??= {}).pct = v;
+      }
+    } catch { /* names are nice to have: the unlock still shows with its internal name */ }
+  });
+  const recent = latest.map(([appid, api]) => {
+    const i = info[`${appid}/${api}`] ?? {};
+    return { appId: String(appid), api, name: i.name ?? "", icon: i.icon ?? "", rarity: i.pct != null ? String(i.pct) : null };
+  });
+  await db("tl_srv_profile", { p_id: id, p_recent: recent });
+}
+
+// ---------- code: link with a code in the Steam profile name ----------
+// For networks that block Steam's login page. The player puts a short code (e.g. TL-3F9A21) in their
+// Steam profile name; the server sees it there through the Steam Web API, which only the real owner
+// of that Steam account could have done.
+
+async function code(body: any): Promise<any> {
+  const c = await db("tl_srv_code", { p_id: body?.id ?? null, p_secret: body?.secret ?? null });
+  if (c?.error) return c;
+  const key = env("STEAM_API_KEY");
+  if (!key) return { error: "The Trophyline server doesn't have a Steam API key yet. Ask the server owner to add it." };
+  const s = await steam(`/ISteamUser/GetPlayerSummaries/v2/?key=${encodeURIComponent(key)}&steamids=${c.steam_id}&format=json`);
+  if (s.status !== 200) return { error: `Steam didn't answer (${s.status}). Try again in a minute.` };
+  const persona = String(s.body?.response?.players?.[0]?.personaname ?? "");
+  if (!persona.toUpperCase().includes(String(c.code).toUpperCase())) return { ok: true, linked: false, persona };
+  const r = await db("tl_srv_link", { p_id: body.id, p_secret: body.secret, p_steam_id: c.steam_id, p_nonce: "code|" + c.code + "|" + c.steam_id });
+  return r?.error ? r : { ok: true, linked: true, steam_id: c.steam_id };
 }
 
 // ---------- entry point ----------
@@ -225,6 +273,7 @@ export async function handle(req: Request): Promise<Response> {
   try {
     if (body?.action === "link") return json(await link(body));
     if (body?.action === "verify") return json(await verify(body));
+    if (body?.action === "code") return json(await code(body));
     return json({ error: "Unknown action" }, 400);
   } catch (e) {
     console.error(e);

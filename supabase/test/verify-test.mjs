@@ -7,7 +7,8 @@
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 
-const DB = "http://127.0.0.1:8790", STEAM = "http://127.0.0.1:8791", FN_PORT = 8792;
+const BASE = Number(process.env.TEST_PORT_BASE || 8790); // TEST_PORT_BASE moves all three ports (to run next to another test)
+const DB = `http://127.0.0.1:${BASE}`, STEAM = `http://127.0.0.1:${BASE + 1}`, FN_PORT = BASE + 2;
 process.env.SUPABASE_URL = DB;
 process.env.SUPABASE_SERVICE_ROLE_KEY = "test-service-key";
 process.env.STEAM_API_KEY = "fake-key";
@@ -36,10 +37,20 @@ const steam = createServer(async (req, res) => {
     return send(200, { achievementpercentages: { achievements: (g?.ach ?? []).filter((a) => a.pct != null).map((a) => ({ name: a.name, percent: String(a.pct) })) } });
   }
   if (p.get("key") !== "fake-key") return send(403, "<html>Forbidden</html>");
+  if (url.pathname.includes("GetSchemaForGame")) {
+    const appid = p.get("appid");
+    const g = Object.values(accounts).map((a) => a.games[appid]).find(Boolean);
+    return send(200, { game: { availableGameStats: { achievements: (g?.ach ?? []).map((a) => ({ name: a.name, displayName: "Nice " + a.name,
+      icon: `https://cdn.example/steamcommunity/public/images/apps/${appid}/${a.name.toLowerCase()}.jpg` })) } } });
+  }
+  if (url.pathname.includes("GetPlayerSummaries")) {
+    const sid = p.get("steamids");
+    return send(200, { response: { players: accounts[sid] ? [{ steamid: sid, personaname: accounts[sid].persona ?? "Player" }] : [] } });
+  }
   const acc = accounts[p.get("steamid")];
   if (url.pathname.includes("GetOwnedGames")) {
     if (!acc || acc.private) return send(200, { response: {} });
-    const games = Object.entries(acc.games).map(([appid, g]) => ({ appid: Number(appid), playtime_forever: g.minutes, has_community_visible_stats: g.stats }));
+    const games = Object.entries(acc.games).map(([appid, g]) => ({ appid: Number(appid), name: "Game " + appid, playtime_forever: g.minutes, has_community_visible_stats: g.stats }));
     return send(200, { response: { game_count: games.length, games } });
   }
   if (url.pathname.includes("GetPlayerAchievements")) {
@@ -51,11 +62,11 @@ const steam = createServer(async (req, res) => {
   }
   send(404, { error: "not found" });
 });
-await new Promise((r) => steam.listen(8791, "127.0.0.1", r));
+await new Promise((r) => steam.listen(BASE + 1, "127.0.0.1", r));
 
 // ---------- database ----------
 const shim = spawn(process.execPath, ["shim.mjs"], {
-  cwd: new URL(".", import.meta.url), env: { ...process.env, PORT: "8790", EXTRA_SQL: "admin.sql" }, stdio: ["ignore", "pipe", "inherit"],
+  cwd: new URL(".", import.meta.url), env: { ...process.env, PORT: String(BASE), EXTRA_SQL: "admin.sql" }, stdio: ["ignore", "pipe", "inherit"],
 });
 await new Promise((resolve, reject) => {
   shim.stdout.on("data", (d) => { if (String(d).includes("ready on")) resolve(); });
@@ -153,6 +164,15 @@ if (process.env.KEEP !== "1") {
   await rpc("tl_upsert", { p: { id: me.id, secret: me.secret, name: "Alice", xp: 9999999, level: 300, perfect: 999, over75: 999, seasons: [{ id: "2026-4", xp: 999999 }] } });
   let lb = await rpc("tl_leaderboard", { p_board: "xp", p_me: me.id });
   check("unverified player is not on the leaderboard", lb.rows.length === 0 && lb.me === null, lb);
+  await new Promise((res) => setTimeout(res, 11000)); // tl_upsert allows one upload per 10 s
+  await rpc("tl_upsert", { p: { id: me.id, secret: me.secret, name: "Alice", xp: 9999999, level: 300,
+    profile: { icon: "trophy", links: { discord: "alice" }, topGames: [{ appId: "1", name: "Fake", unlocked: 99, total: 99 }], recent: [{ name: "Fake" }] } } });
+  const unv = await rpc("tl_player", { p_id: me.id });
+  check("unverified profile shows no numbers at all", unv.xp === 0 && unv.level === 1 && unv.perfect === 0 && unv.verified === false, unv);
+  check("...and no best games or unlocks sent by the app", !unv.profile.topGames && !unv.profile.recent, unv.profile);
+  check("an icon a low level could not buy is not shown", unv.profile.icon === "" && unv.profile.links.discord === "alice", unv.profile);
+  const raw = (await query(`select xp, level from players where id = '${me.id}'`))[0];
+  check("the uploaded numbers are not even stored", raw.xp === 0 && raw.level === 1, raw);
 
   r = await fn({ action: "verify", ...me });
   check("verify reads Steam", r.ok && r.state === "ok" && !r.partial, r);
@@ -190,6 +210,38 @@ if (process.env.KEEP !== "1") {
   check("season board uses Steam's season XP", lb.rows.length === 1 && lb.rows[0].value === 1780, lb.rows);
   const prof = await rpc("tl_player", { p_id: me.id });
   check("profile shows verified", prof.verified === true && prof.places.xp === 1, prof);
+  check("best games come from Steam", prof.profile.topGames?.[0]?.name === "Game 400" && prof.profile.topGames[1].name === "Game 200"
+        && prof.profile.topGames.length === 3, prof.profile.topGames);
+  check("latest unlocks come from Steam with names and icons", prof.profile.recent?.length === 10
+        && prof.profile.recent.every((u) => /^Nice C\d+$/.test(u.name) && u.icon === u.name.slice(5).toLowerCase() + ".jpg" && u.game === "Game 400"),
+        prof.profile.recent);
+  const fakeRecent = await rpc("tl_srv_profile", { p_id: me.id, p_recent: [] });
+  check("app key can't write the profile unlocks", !!fakeRecent.httpError, fakeRecent);
+
+  // ----- linking with a name code -----
+  const E = "76561198000000005";
+  account(E).persona = "Erin";
+  account(E).games = { 900: { minutes: 120, stats: true, ach: [{ name: "Z0", got: true, time: now - 7200, pct: 2 }, { name: "Z1", got: false, pct: 2 }] } };
+  const reg3 = await rpc("tl_register", { p_username: "erin_test", p_password: "erin-password-1" });
+  const er = { id: reg3.id, secret: reg3.secret };
+  let cb = await rpc("tl_code_begin", { p_id: er.id, p_secret: er.secret, p_steam_id: A });
+  check("a code for a Steam account someone else linked is refused", /already linked/.test(cb.error ?? ""), cb);
+  cb = await rpc("tl_code_begin", { p_id: er.id, p_secret: er.secret, p_steam_id: E });
+  check("get a name code", cb.ok && /^TL-[0-9A-F]{6}$/.test(cb.code), cb);
+  r = await fn({ action: "code", ...er });
+  check("not linked while the code isn't in the Steam name", r.ok && r.linked === false && r.persona === "Erin", r);
+  r = await fn({ action: "code", id: er.id, secret: "wrong-secret-wrong-secret-wrong" });
+  check("someone else's login can't use the code", /Log in/.test(r.error ?? ""), r);
+  account(E).persona = "Erin " + cb.code.toLowerCase();
+  r = await fn({ action: "code", ...er });
+  check("linked once the code is in the Steam name", r.ok && r.linked === true && r.steam_id === E, r);
+  r = await fn({ action: "code", ...er });
+  check("the code works only once", /ran out/.test(r.error ?? ""), r);
+  r = await fn({ action: "verify", ...er });
+  check("a code-linked account is checked with Steam like any other", r.ok && r.unlocked === 1 && r.xp === 100 + 50 + 20, r);
+  const sr = await rpc("tl_srv_code", { p_id: er.id, p_secret: er.secret });
+  check("app key can't read codes as the server", !!sr.httpError, sr);
+  await rpc("tl_delete", { p_id: er.id, p_secret: er.secret });
 
   // later: Steam Achievement Manager style cheating in three games within one minute
   const t0 = Math.floor(now / 60) * 60 - 600;
@@ -264,6 +316,15 @@ account(D).games = {
   570: { minutes: 90, stats: true, ach: [{ name: "E0", got: true, time: now - 5 * 86400, pct: 0.7 }, { name: "E1", got: true, time: now - 4 * 86400, pct: 40 }] },
 };
 createServer(async (req, res) => {
+  // POST /test/persona?sid=...&name=...  sets a fake Steam profile name (for testing name codes);
+  // an account that doesn't exist yet gets the same games as D
+  if (req.url.startsWith("/test/persona")) {
+    const q = new URL(req.url, "http://x").searchParams;
+    const acc = account(q.get("sid"));
+    if (Object.keys(acc.games).length === 0) acc.games = structuredClone(account(D).games);
+    acc.persona = q.get("name");
+    res.writeHead(200); return res.end("ok");
+  }
   if (!req.url.startsWith("/functions/v1/trophyline")) { res.writeHead(404); return res.end(); }
   let body = ""; for await (const c of req) body += c;
   const parsed = body ? JSON.parse(body) : {};

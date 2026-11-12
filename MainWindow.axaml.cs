@@ -1018,8 +1018,7 @@ public partial class MainWindow : Window
 
     async Task UploadNow(bool force = true)
     {
-        if (data == null || xp == null) return;
-        var err = await Online.Upload(data.Games, xp, force);
+        var err = await Online.Upload(force);
         if (err == null && Online.Enabled) await SyncPicture();
         if (OnlineStatus != null)
             OnlineStatus.Text = err == null
@@ -1039,6 +1038,7 @@ public partial class MainWindow : Window
         _ = Task.Delay(1500).ContinueWith(_ => Dispatcher.UIThread.Post(() => ((ScrollViewer)SettingsPage).Offset = new Vector(0, 700)));
         if (p[0] == "logout") { Logout_Click(null, new RoutedEventArgs()); return; }
         if (p[0] == "link") { LinkSteam_Click(null, new RoutedEventArgs()); return; }
+        if (p[0] == "code") { await Task.Delay(800); SteamCode_Click(null, new RoutedEventArgs()); return; }
         if (p[0] == "verify") { VerifyNow_Click(null, new RoutedEventArgs()); return; }
         if (p[0] == "status") return;
         if (p.Length < 3) return;
@@ -1096,6 +1096,7 @@ public partial class MainWindow : Window
         LinkSteamButton.Classes.Set("pill", linked);
         LinkSteamText.Margin = linked ? new Thickness(0) : new Thickness(0, 9);
         VerifyButton.IsVisible = linked;
+        SteamCodeButton.IsVisible = !linked;
         VerifyTitle.Foreground = ranked ? Fmt.Green : flagged || state == "private" ? Fmt.Orange : Res("Text");
         if (!linked)
         {
@@ -1138,6 +1139,41 @@ public partial class MainWindow : Window
         if (err != null) { VerifyNote(err); return; }
         VerifyNote("Linked. Reading your achievements from Steam…", good: true);
         await RunVerify();
+    }
+
+    /// Linking with a name code: works on networks that block Steam's login page.
+    async void SteamCode_Click(object? sender, RoutedEventArgs e)
+    {
+        linkCancel?.Cancel();
+        var cts = linkCancel = new CancellationTokenSource();
+        var acc = SteamAccounts.Current();
+        if (acc == null) { VerifyNote("No Steam account found on this computer. Sign in to Steam on this PC once, then try again."); return; }
+        var (code, err) = await Online.StartSteamCode(acc.Id64);
+        if (err != null || code == null) { VerifyNote(err ?? "Couldn't get a code."); return; }
+        string Steps(string extra) =>
+            $"Put  {code}  anywhere in the Steam profile name of {acc.Display} (in Steam: Friends list → click your name → Change Profile Name, "
+            + $"or your profile → Edit Profile). Trophyline looks every 15 seconds; once it says linked, change your name back. The code works for 20 minutes.{extra}";
+        VerifyNote(Steps(""), good: true);
+        SteamCodeButton.IsEnabled = LinkSteamButton.IsEnabled = false;
+        try
+        {
+            var until = DateTime.UtcNow.AddMinutes(20);
+            while (!cts.IsCancellationRequested && DateTime.UtcNow < until)
+            {
+                try { await Task.Delay(15000, cts.Token); } catch (OperationCanceledException) { return; }
+                var (linked, problem) = await Online.CheckSteamCode();
+                if (linked)
+                {
+                    VerifyNote("Linked! You can change your Steam profile name back now. Reading your achievements from Steam…", good: true);
+                    await RunVerify();
+                    return;
+                }
+                if (problem != null && problem.Contains("ran out")) { VerifyNote(problem); return; }
+                VerifyNote(Steps(problem != null ? $"\n\n(Last look: {problem})" : $"\n\nNot there yet ({DateTime.Now:HH:mm:ss})."), good: problem == null);
+            }
+            if (!cts.IsCancellationRequested) VerifyNote("The code ran out. Press \"Use a name code instead\" for a new one.");
+        }
+        finally { SteamCodeButton.IsEnabled = LinkSteamButton.IsEnabled = true; }
     }
 
     async void VerifyNow_Click(object? sender, RoutedEventArgs e)
@@ -1505,25 +1541,27 @@ public partial class MainWindow : Window
         ht.Children.Add(new TextBlock { Text = name + (id == Online.MyId ? "  (you)" : ""), FontSize = 32, FontWeight = FontWeight.Bold });
         bool verified = p["verified"]?.GetValue<bool>() == true;
         var levelLine = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12 };
-        levelLine.Children.Add(new TextBlock { Text = $"Level {level}  ·  {rank}", FontSize = 16, FontWeight = FontWeight.SemiBold, Foreground = Fmt.Brush(rankHex) });
+        if (verified)
+            levelLine.Children.Add(new TextBlock { Text = $"Level {level}  ·  {rank}", FontSize = 16, FontWeight = FontWeight.SemiBold, Foreground = Fmt.Brush(rankHex) });
         var badge = new Border
         {
             CornerRadius = new CornerRadius(8), Padding = new Thickness(8, 2), VerticalAlignment = VerticalAlignment.Center,
             Background = verified ? Fmt.Tint(Fmt.Green, 0x30) : Res("Line"),
             Child = new TextBlock
             {
-                Text = verified ? "✓ Steam-verified" : "not verified · not ranked", FontSize = 12, FontWeight = FontWeight.SemiBold,
+                Text = verified ? "✓ Steam-verified" : "not verified · no scores shown", FontSize = 12, FontWeight = FontWeight.SemiBold,
                 Foreground = verified ? Fmt.Green : Res("Muted"),
             },
         };
         ToolTip.SetTip(badge, verified
             ? "These numbers come from Steam itself, read by the Trophyline server."
-            : "These numbers come from this player's computer and weren't checked with Steam, so they aren't ranked.");
+            : "Steam hasn't confirmed this player's achievements, so no numbers are shown.");
         levelLine.Children.Add(badge);
         ht.Children.Add(levelLine);
         ht.Children.Add(new TextBlock
         {
-            Text = $"On Trophyline since {Fmt.Local(L(p["created"])):dd.MM.yyyy}  ·  updated {Fmt.Ago(L(p["updated"]))}",
+            Text = $"On Trophyline since {Fmt.Local(L(p["created"])):dd.MM.yyyy}"
+                 + (verified && L(p["updated"]) > 0 ? $"  ·  checked with Steam {Fmt.Ago(L(p["updated"]))}" : ""),
             Foreground = Res("Muted"), FontSize = 13, Margin = new Thickness(0, 4, 0, 0),
         });
         var actions = new WrapPanel { Margin = new Thickness(0, 10, 0, 0) };
@@ -1560,6 +1598,21 @@ public partial class MainWindow : Window
         head.Children.Add(ht);
         PlayerBody.Children.Add(head);
         PlayerBody.Children.Add(reportPanel);
+
+        if (!verified)
+        {
+            // nothing unchecked is ever shown: numbers only come from Steam
+            var none = new TextBlock
+            {
+                Text = p["linked"]?.GetValue<bool>() == true
+                    ? $"{name} has linked a Steam account, but Steam hasn't confirmed their achievements yet (or the cheat check paused them). Their numbers show up here once it has."
+                    : $"{name} hasn't linked a Steam account yet. Only numbers that Trophyline's server read from Steam itself are shown, so there's nothing to show here yet.",
+                TextWrapping = TextWrapping.Wrap, Foreground = Res("Muted"), Margin = new Thickness(0, 22, 0, 0), MaxWidth = 760,
+                HorizontalAlignment = HorizontalAlignment.Left,
+            };
+            PlayerBody.Children.Add(none);
+            return;
+        }
 
         var places = p["places"];
         var season = p["season"];

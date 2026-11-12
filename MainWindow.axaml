@@ -838,6 +838,28 @@
                     <TextBlock Text="Settings" Classes="pageTitle"/>
                     <TextBlock Classes="muted" Margin="0,4,0,0" Text="Saved straight away."/>
 
+                    <TextBlock Text="Steam account" Classes="section" Margin="0,26,0,4"/>
+                    <TextBlock Classes="muted" FontSize="13" Margin="0,0,0,14" TextWrapping="Wrap"
+                               Text="Choose whose achievements Trophyline shows. Either way the numbers come from that account's Steam files on this computer."/>
+                    <Border Classes="card" Padding="16,14">
+                        <StackPanel Spacing="12">
+                            <TextBlock x:Name="AccountNow" FontWeight="SemiBold" TextWrapping="Wrap"/>
+                            <Grid ColumnDefinitions="Auto,12,*" RowDefinitions="Auto,12,Auto">
+                                <TextBlock Text="Use this PC's files" VerticalAlignment="Center" MinWidth="150"/>
+                                <ComboBox x:Name="AccountPick" Grid.Column="2" Classes="drop" MaxWidth="460" HorizontalAlignment="Left" MinWidth="360"/>
+                                <TextBlock Grid.Row="2" Text="Or log in" VerticalAlignment="Center"/>
+                                <StackPanel Grid.Row="2" Grid.Column="2" Orientation="Horizontal" Spacing="10">
+                                    <Button x:Name="SteamSignInButton" Classes="pill" Click="SteamSignIn_Click">
+                                        <TextBlock x:Name="SteamSignInText" Text="Sign in with Steam…"/>
+                                    </Button>
+                                    <TextBlock Classes="muted" FontSize="12" VerticalAlignment="Center" TextWrapping="Wrap" MaxWidth="420"
+                                               Text="Opens Steam's own login page in your browser. Trophyline never sees your password."/>
+                                </StackPanel>
+                            </Grid>
+                            <TextBlock x:Name="AccountStatus" Classes="muted" FontSize="12" TextWrapping="Wrap"/>
+                        </StackPanel>
+                    </Border>
+
                     <TextBlock Text="Accent colour" Classes="section" Margin="0,26,0,4"/>
                     <TextBlock Classes="muted" FontSize="13" Margin="0,0,0,16" TextWrapping="Wrap"
                                Text="Colours the menu, buttons, progress bars and the activity calendar."/>

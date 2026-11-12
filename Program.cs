@@ -46,6 +46,7 @@ static class Program
                 "--background" => Run(),
                 "--update" => UpdateOnce(),
                 "--self-update" => SelfUpdate(),
+                "--steam-signin" => SteamSignIn(),
                 "--stop" => Stop(true),
                 "--install" => Install(),
                 "--uninstall" => Uninstall(),
@@ -114,6 +115,18 @@ static class Program
         return Say(added == 0
             ? $"No new achievements. The journal has {total}."
             : $"Added {added} achievement(s). The journal has {total}.");
+    }
+
+    /// Sign in with Steam from the command line (the window has a button for this in Settings).
+    static int SteamSignIn()
+    {
+        var r = SteamAccounts.SignIn(CancellationToken.None).GetAwaiter().GetResult();
+        if (r.Id64 == null) return Fail("Steam sign-in failed: " + r.Error);
+        var cfg = ReadConfig();
+        cfg.SteamAccount = r.Id64;
+        cfg.SteamSignedIn = true;
+        SaveSettings(cfg);
+        return Say($"Signed in. Trophyline now shows Steam account {r.Id64}.");
     }
 
     static int SelfUpdate()
@@ -330,6 +343,12 @@ public sealed class Config
     public bool AutoUpdate { get; set; } = true;
     /// The first-start notice was read and accepted.
     public bool WelcomeAccepted { get; set; }
+    /// The Steam account to show (its 17-digit ID). Empty = whoever is signed in to Steam right now.
+    public string SteamAccount { get; set; } = "";
+    /// True when that account was chosen with "Sign in with Steam".
+    public bool SteamSignedIn { get; set; }
+    /// The Steam account your online profile belongs to (so another account's numbers never overwrite it).
+    public string OnlineSteamAccount { get; set; } = "";
     /// Accent colour of the window, e.g. "#66C0F4".
     public string Accent { get; set; } = Palette.Default;
 }

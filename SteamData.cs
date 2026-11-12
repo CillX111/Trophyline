@@ -42,6 +42,7 @@ public sealed class GameInfo
 public sealed class SteamData
 {
     public string? PersonaName { get; private set; }
+    public SteamAccount? Account { get; private set; }
     public List<GameInfo> Games { get; } = [];
 
     // Steam tools, not games.
@@ -55,30 +56,12 @@ public sealed class SteamData
         GameInfo Get(string id) => games.TryGetValue(id, out var g) ? g : games[id] = new GameInfo { AppId = id };
 
         // 1. Who is logged in
-        string? accountId = null;
-        try
-        {
-            var users = Vdf.ParseFile(Path.Combine(steam, "config", "loginusers.vdf")).Obj("users");
-            if (users != null)
-            {
-                var (id64, user) = users.Where(kv => kv.Value is Dictionary<string, object>)
-                    .Select(kv => (kv.Key, (Dictionary<string, object>)kv.Value))
-                    .OrderByDescending(u => u.Item2.Str("MostRecent") == "1")
-                    .ThenByDescending(u => u.Item2.Num("Timestamp") ?? 0)
-                    .FirstOrDefault();
-                if (user != null)
-                {
-                    data.PersonaName = user.Str("PersonaName");
-                    if (ulong.TryParse(id64, out var v)) accountId = (v - 76561197960265728UL).ToString();
-                }
-            }
-        }
-        catch (IOException) { }
+        // (the account picked in Settings, or whoever is signed in to Steam right now)
+        var account = SteamAccounts.Current();
+        data.Account = account;
+        data.PersonaName = account?.Display;
+        string? accountId = account?.AccountId;
         var userData = Path.Combine(steam, "userdata");
-        if (accountId == null || !Directory.Exists(Path.Combine(userData, accountId)))
-            accountId = Directory.Exists(userData)
-                ? Directory.EnumerateDirectories(userData).Select(Path.GetFileName).FirstOrDefault(n => n != "0")
-                : null;
 
         // 2. Playtime and last played
         if (accountId != null)

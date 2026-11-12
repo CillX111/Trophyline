@@ -95,6 +95,7 @@ public partial class MainWindow : Window
         NavLevel.IsCheckedChanged += (_, _) => { if (NavLevel.IsChecked == true && !syncingNav) { ShowPage(LevelPage); AnimateLevelBar(); } };
         NavPlaytime.IsCheckedChanged += (_, _) => { if (NavPlaytime.IsChecked == true && !syncingNav) { BuildPlaytime(); ShowPage(PlaytimePage); } };
         nowTimer.Tick += (_, _) => { if (PlaytimePage.IsVisible) UpdateNowPlaying(); };
+        AccountPick.SelectionChanged += (_, _) => AccountPick_Changed();
         AutoUpdateSwitch.IsCheckedChanged += (_, _) =>
         {
             if (fillingSettings) return;
@@ -795,6 +796,7 @@ public partial class MainWindow : Window
             PauseOnQuitSwitch.IsChecked = cfg.PauseSoundtrackOnQuit;
             PopupsSwitch.IsChecked = cfg.UnlockPopups;
             AutoUpdateSwitch.IsChecked = cfg.AutoUpdate;
+            FillAccountPick(cfg);
             if (UpdateStatus.Text is null or "")
                 UpdateStatus.Text = $"You have version {Updater.Current.ToString(3)}."
                     + (Platform.Mac ? " On macOS, Trophyline tells you about new versions; you download them yourself." : "");
@@ -1658,6 +1660,76 @@ public partial class MainWindow : Window
                 foreach (var chip in row.Children.OfType<RadioButton>())
                     chip.IsChecked = (string?)chip.Content == label;
         }
+    }
+
+    // =============== Steam account (Settings) ===============
+
+    List<string> accountChoices = [];     // "" = automatic, otherwise a 17-digit Steam ID
+    CancellationTokenSource? signIn;
+
+    void FillAccountPick(Config cfg)
+    {
+        var all = SteamAccounts.List();
+        var live = SteamAccounts.SignedInNow(all);
+        var current = SteamAccounts.Current();
+        accountChoices = ["", .. all.Select(a => a.Id64)];
+        AccountPick.ItemsSource = new[] { $"Automatic: whoever is signed in to Steam{(live != null ? $" (now {live.Display})" : "")}" }
+            .Concat(all.Select(a => a.Display + (a.Login.Length > 0 && a.Login != a.Display ? $"  ({a.Login})" : "") + (a.HasFiles ? "" : "  · no files on this PC yet")))
+            .ToList();
+        int index = cfg.SteamAccount.Length == 0 ? 0 : accountChoices.IndexOf(cfg.SteamAccount);
+        AccountPick.SelectedIndex = Math.Max(0, index);
+
+        bool missing = cfg.SteamAccount.Length > 0 && index < 0; // signed in to an account Steam on this PC doesn't know
+        AccountNow.Text = current == null ? "No Steam account found on this computer."
+            : $"Showing {current.Display}" + (cfg.SteamAccount.Length == 0 || missing ? "  ·  automatic"
+                : cfg.SteamSignedIn ? "  ·  signed in with Steam" : "  ·  picked by you");
+        if (missing)
+            AccountStatus.Text = "The account you signed in with has never been used in Steam on this computer, so there are no files to read yet. "
+                               + "Log in to Steam with it once and start a game; then it shows up here. Until then Trophyline shows the automatic account.";
+        else if (current is { HasFiles: false })
+            AccountStatus.Text = $"Steam has no files for {current.Display} on this computer yet. Start a game with that account once.";
+        else if (AccountStatus.Text?.StartsWith("Waiting") != true && AccountStatus.Text?.StartsWith("Signed in") != true)
+            AccountStatus.Text = all.Count > 1 ? $"{all.Count} Steam accounts have been used on this computer." : "";
+    }
+
+    async void AccountPick_Changed()
+    {
+        if (fillingSettings) return;
+        int i = AccountPick.SelectedIndex;
+        if (i < 0 || i >= accountChoices.Count) return;
+        var cfg = Program.Settings();
+        if (cfg.SteamAccount == accountChoices[i]) return;
+        cfg.SteamAccount = accountChoices[i];
+        cfg.SteamSignedIn = false;
+        Program.SaveSettings(cfg);
+        AccountStatus.Text = "";
+        await LoadAsync(online: true);
+        BuildSettings();
+    }
+
+    async void SteamSignIn_Click(object? sender, RoutedEventArgs e)
+    {
+        if (signIn != null) { signIn.Cancel(); return; } // second click cancels
+        signIn = new CancellationTokenSource();
+        SteamSignInText.Text = "Cancel";
+        AccountStatus.Text = "Waiting for you to sign in on Steam's page in your browser…";
+        var r = await SteamAccounts.SignIn(signIn.Token);
+        signIn.Dispose();
+        signIn = null;
+        SteamSignInText.Text = "Sign in with Steam…";
+        Activate();
+        if (r.Id64 == null) { AccountStatus.Text = r.Error ?? "Sign-in failed."; return; }
+
+        var cfg = Program.Settings();
+        cfg.SteamAccount = r.Id64;
+        cfg.SteamSignedIn = true;
+        Program.SaveSettings(cfg);
+        var known = SteamAccounts.List().FirstOrDefault(a => a.Id64 == r.Id64);
+        var name = known?.Display ?? await SteamAccounts.PublicName(r.Id64) ?? r.Id64;
+        AccountStatus.Text = $"Signed in as {name}.";
+        await LoadAsync(online: true);
+        BuildSettings();
+        if (known == null) AccountStatus.Text = $"Signed in as {name}. " + AccountStatus.Text;
     }
 
     // =============== first-start notice ===============

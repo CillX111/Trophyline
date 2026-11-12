@@ -61,6 +61,10 @@ The files aren't signed by Microsoft or Apple, so the first launch shows a warni
   icons in four tiers (Common, Rare, Epic, Legendary); the equipped icon shows in the
   sidebar, on your profile and on the leaderboards
 - **Secret achievements stay secret**: no name, description or picture until you unlock them
+- **Choose your Steam account** (Settings → Steam account): automatic (whoever is signed in
+  to Steam right now), any account that has been used on this computer, or **Sign in with
+  Steam** (Steam's own login page in your browser; Trophyline never sees a password). The
+  numbers always come from that account's Steam files on this computer
 - **Storage**: installed games by size, flags games not played in 6+ months
 - **Music**: save your Spotify playlists, albums or artists (paste a share link) and play
   them with one click; a mini-player in the sidebar shows the current song with

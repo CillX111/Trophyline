@@ -81,6 +81,7 @@ static class Online
         if (cfg.OnlineSecret.Length == 0) cfg.OnlineSecret = Random(48);
         cfg.OnlineName = name.Trim();
         cfg.OnlineEnabled = true;
+        if (cfg.OnlineSteamAccount.Length == 0) cfg.OnlineSteamAccount = SteamAccounts.Current()?.Id64 ?? "";
         Program.SaveSettings(cfg);
     }
 
@@ -109,6 +110,7 @@ static class Online
         cfg.OnlineEnabled = false;
         cfg.OnlineId = "";
         cfg.OnlineSecret = "";
+        cfg.OnlineSteamAccount = "";
         cfg.AvatarHash = "";
         Program.SaveSettings(cfg);
         return null;
@@ -121,8 +123,13 @@ static class Online
     {
         if (!Enabled) return null;
         if (!force && DateTime.UtcNow - lastUpload < TimeSpan.FromMinutes(2)) return null;
-        lastUpload = DateTime.UtcNow;
         var cfg = Program.Settings();
+        // one online profile belongs to one Steam account: another account's numbers never overwrite it
+        var steamId = SteamAccounts.Current()?.Id64 ?? "";
+        if (steamId.Length > 0 && cfg.OnlineSteamAccount.Length == 0) { cfg.OnlineSteamAccount = steamId; Program.SaveSettings(cfg); }
+        else if (steamId.Length > 0 && cfg.OnlineSteamAccount != steamId)
+            return "Your online profile belongs to a different Steam account, so nothing was uploaded. Switch back to that account, or delete the online account (bottom of Settings) and join again with this one.";
+        lastUpload = DateTime.UtcNow;
         var all = gameList.ToList();
         var games = all.Where(g => g.Total > 0).ToList();
         var season = Season.Current;

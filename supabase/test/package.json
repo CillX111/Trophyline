@@ -1,0 +1,12 @@
+{
+  "name": "trophyline-supabase-test",
+  "private": true,
+  "description": "Runs trophyline.sql in an in-memory Postgres (PGlite) behind a tiny Supabase-style /rest/v1/rpc endpoint, for testing without a real project.",
+  "type": "module",
+  "scripts": {
+    "start": "node shim.mjs"
+  },
+  "dependencies": {
+    "@electric-sql/pglite": "0.3.11"
+  }
+}

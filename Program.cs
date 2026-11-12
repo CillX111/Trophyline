@@ -292,8 +292,9 @@ public sealed class Config
     public string OnlineName { get; set; } = "";
     public string OnlineId { get; set; } = "";
     public string OnlineSecret { get; set; } = "";
-    /// Leave empty to use the public Trophyline server.
+    /// Leave empty to use the public Trophyline server (a Supabase project URL and its publishable key).
     public string Server { get; set; } = "";
+    public string ServerKey { get; set; } = "";
     /// Accent colour of the window, e.g. "#66C0F4".
     public string Accent { get; set; } = Palette.Default;
 }

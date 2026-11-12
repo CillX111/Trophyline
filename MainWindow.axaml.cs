@@ -61,6 +61,14 @@ public partial class MainWindow : Window
         NavGames.IsCheckedChanged += (_, _) => { if (NavGames.IsChecked == true && !syncingNav) ShowPage(GamesPage); };
         NavStorage.IsCheckedChanged += (_, _) => { if (NavStorage.IsChecked == true && !syncingNav) ShowPage(StoragePage); };
         NavMusic.IsCheckedChanged += (_, _) => { if (NavMusic.IsChecked == true && !syncingNav) ShowPage(MusicPage); };
+        NavSettings.IsCheckedChanged += (_, _) => { if (NavSettings.IsChecked == true && !syncingNav) { BuildSettings(); ShowPage(SettingsPage); } };
+        GameSoundtrack.SelectionChanged += (_, _) => SoundtrackChanged();
+        PauseOnQuitSwitch.IsCheckedChanged += (_, _) =>
+        {
+            var cfg = Program.Settings();
+            cfg.PauseSoundtrackOnQuit = PauseOnQuitSwitch.IsChecked == true;
+            Program.SaveSettings(cfg);
+        };
 
         // Spotify: ask what's playing every 2 seconds while the window is open.
         musicTimer.Tick += async (_, _) => await RefreshMusic();
@@ -238,11 +246,11 @@ public partial class MainWindow : Window
         int minutes = games.Sum(g => g.G.PlaytimeMinutes);
         var rarest = unlocked.Where(a => a.A.Rarity != null).OrderBy(a => a.A.Rarity).FirstOrDefault();
 
-        Tiles.Children.Add(Tile("IconStar", unlocked.Count.ToString("N0"), "achievements unlocked", $"out of {totalAch:N0} in your games", Fmt.Blue));
+        Tiles.Children.Add(Tile("IconStar", unlocked.Count.ToString("N0"), "achievements unlocked", $"out of {totalAch:N0} in your games", Palette.Brush));
         Tiles.Children.Add(Tile("IconStar", perfect.ToString(), perfect == 1 ? "perfect game" : "perfect games", $"{half} games at 50% or more", Fmt.Gold));
         Tiles.Children.Add(Tile("IconChart", $"{avg:0}%", "average completion", $"across {started.Count} games you've started", Fmt.Purple));
         Tiles.Children.Add(Tile("IconClock", $"{minutes / 60.0:N0} h", "total playtime", two > 0 ? $"{Fmt.Hours(two)} in the last 2 weeks" : "nothing in the last 2 weeks", Fmt.Green));
-        Tiles.Children.Add(Tile("IconGame", games.Count.ToString(), "games", $"{games.Count(g => g.G.Installed)} installed", Fmt.Blue));
+        Tiles.Children.Add(Tile("IconGame", games.Count.ToString(), "games", $"{games.Count(g => g.G.Installed)} installed", Palette.Brush));
         Tiles.Children.Add(rarest != null
             ? Tile("IconBolt", rarest.A.Rarity < 10 ? $"{rarest.A.Rarity:0.0}%" : $"{rarest.A.Rarity:0}%", "rarest unlock", $"{rarest.Name} · {rarest.Game}", Fmt.Gold)
             : Tile("IconBolt", "–", "rarest unlock", "loading global stats…", Fmt.Gold));
@@ -293,7 +301,7 @@ public partial class MainWindow : Window
         const double cell = 14, step = 18, left = 34, top = 22;
         var today = DateTime.Today;
         var start = today.AddDays(-(((int)today.DayOfWeek + 6) % 7)).AddDays(-7 * (weeks - 1)); // a Monday
-        IBrush[] levels = [Res("Line"), Fmt.Brush("#1D4466"), Fmt.Brush("#2B6A9C"), Fmt.Brush("#3F94CF"), Fmt.Brush("#7FD0FF")];
+        IBrush[] levels = Palette.HeatLevels();
         var muted = Res("Muted");
 
         int lastMonth = -1;
@@ -454,7 +462,11 @@ public partial class MainWindow : Window
         bool hasAch = g.Total > 0;
         GameBar.IsVisible = GameChips.IsVisible = GameAchList.IsVisible = hasAch;
         GameNoAch.IsVisible = !hasAch;
-        GameBar.Foreground = g.Perfect ? Fmt.Gold : Fmt.Blue;
+        GameBar.Foreground = g.Perfect ? Fmt.Gold : Palette.Brush;
+        GamePlayText.Text = g.Installed ? "Play" : "Install";
+        GamePlayIcon.Data = Icon(g.Installed ? "IconPlay" : "IconDownload");
+        ToolTip.SetTip(GamePlay, g.Installed ? $"Start {vm.Name} in Steam" : $"Install {vm.Name} with Steam");
+        FillSoundtrackPicker(g.AppId);
         if (animate)
         {
             GameBar.Value = 0;
@@ -651,9 +663,102 @@ public partial class MainWindow : Window
         FillPlaylists();
     }
 
+    // =============== play a game & its soundtrack ===============
+
+    void PlayGame_Click(object? sender, RoutedEventArgs e)
+    {
+        if (currentGame == null) return;
+        var g = currentGame.G;
+        try { Platform.OpenUrl(g.Installed ? $"steam://rungameid/{g.AppId}" : $"steam://install/{g.AppId}"); }
+        catch (Exception ex)
+        {
+            Program.LogError("play game: " + ex.Message);
+            ToolTip.SetTip(GamePlay, "Couldn't reach Steam. Is it installed?");
+        }
+    }
+
+    List<SavedPlaylist?> soundtrackChoices = [];
+    string? soundtrackFor;
+    bool fillingSoundtrack;
+
+    void FillSoundtrackPicker(string appId)
+    {
+        fillingSoundtrack = true;
+        try
+        {
+            soundtrackFor = appId;
+            var saved = PlaylistStore.Load().OrderBy(p => p.Title, StringComparer.CurrentCultureIgnoreCase).ToList();
+            soundtrackChoices = [null, .. saved];
+            GameSoundtrack.ItemsSource = soundtrackChoices.Select(p => p == null ? "No soundtrack" : p.Title).ToList();
+            var current = SoundtrackStore.Load().GetValueOrDefault(appId);
+            int index = soundtrackChoices.FindIndex(p => p != null && $"{p.Kind}:{p.Id}" == current);
+            GameSoundtrack.SelectedIndex = Math.Max(0, index);
+            GameSoundtrack.IsEnabled = saved.Count > 0;
+            SoundtrackHint.Text = saved.Count == 0
+                ? "Add a playlist on the Music page first, then pick it here."
+                : index > 0
+                    ? (Program.TrackerRunning()
+                        ? "Starts in the background whenever you launch this game."
+                        : "Starts when you launch this game (needs the background tracker, which isn't running).")
+                    : "Pick a playlist and it starts in the background whenever you launch this game.";
+        }
+        finally { fillingSoundtrack = false; }
+    }
+
+    void SoundtrackChanged()
+    {
+        if (fillingSoundtrack || soundtrackFor == null) return;
+        int i = GameSoundtrack.SelectedIndex;
+        if (i < 0 || i >= soundtrackChoices.Count) return;
+        try { SoundtrackStore.Set(soundtrackFor, soundtrackChoices[i]); }
+        catch (Exception ex) { Program.LogError("soundtrack save: " + ex.Message); }
+        FillSoundtrackPicker(soundtrackFor);
+    }
+
+    // =============== settings ===============
+
+    bool fillingSettings;
+
+    void BuildSettings()
+    {
+        fillingSettings = true;
+        try
+        {
+            var cfg = Program.Settings();
+            PauseOnQuitSwitch.IsChecked = cfg.PauseSoundtrackOnQuit;
+            int n = SoundtrackStore.Load().Count;
+            SoundtrackCount.Text = (n == 0 ? "No game has a soundtrack yet." : $"{n} game{(n == 1 ? " has" : "s have")} a soundtrack.")
+                + (Program.TrackerRunning() ? "" : "  The background tracker isn't running, so soundtracks won't start.");
+
+            if (AccentPicker.Children.Count == 0)
+            {
+                foreach (var (name, hex) in Palette.Accents)
+                {
+                    var rb = new RadioButton { Content = name, Tag = hex, GroupName = "accent", Background = Fmt.Brush(hex) };
+                    rb.Classes.Add("swatch");
+                    rb.IsCheckedChanged += (_, _) => { if (rb.IsChecked == true && !fillingSettings) PickAccent((string)rb.Tag!); };
+                    AccentPicker.Children.Add(rb);
+                }
+            }
+            var currentHex = Palette.Accents.Any(a => a.Hex.Equals(cfg.Accent, StringComparison.OrdinalIgnoreCase)) ? cfg.Accent : Palette.Default;
+            foreach (var rb in AccentPicker.Children.OfType<RadioButton>())
+                rb.IsChecked = ((string)rb.Tag!).Equals(currentHex, StringComparison.OrdinalIgnoreCase);
+        }
+        finally { fillingSettings = false; }
+    }
+
+    void PickAccent(string hex)
+    {
+        var cfg = Program.Settings();
+        cfg.Accent = hex;
+        Program.SaveSettings(cfg);
+        Palette.Apply(hex);
+        if (data != null) Apply(data); // rebuild tiles, bars and the calendar in the new colour
+    }
+
     // =============== navigation ===============
 
-    Control[] AllPages => [OverviewPage, AchievementsPage, GamesPage, GamePage, StoragePage, MusicPage];
+    Control[] AllPages => [OverviewPage, AchievementsPage, GamesPage, GamePage, StoragePage, MusicPage, SettingsPage];
 
     Control? VisiblePage() => AllPages.FirstOrDefault(p => p.IsVisible);
 
@@ -662,7 +767,7 @@ public partial class MainWindow : Window
         if (page != GamePage) currentGame = null;
         foreach (var p in AllPages) p.IsVisible = p == page;
         var nav = page == OverviewPage ? NavOverview : page == AchievementsPage ? NavAchievements
-                : page == StoragePage ? NavStorage : page == MusicPage ? NavMusic : NavGames;
+                : page == StoragePage ? NavStorage : page == MusicPage ? NavMusic : page == SettingsPage ? NavSettings : NavGames;
         if (nav.IsChecked != true)
         {
             syncingNav = true;
@@ -719,6 +824,11 @@ public partial class MainWindow : Window
             case "achievements": NavAchievements.IsChecked = true; AchSearch.Text = arg ?? ""; FillAchList(); break;
             case "games": NavGames.IsChecked = true; if (arg != null) GameSort.SelectedIndex = int.Parse(arg); break;
             case "storage": NavStorage.IsChecked = true; break;
+            case "settings":
+                NavSettings.IsChecked = true;
+                if (arg != null) PickAccent(arg);
+                BuildSettings();
+                break;
             case "music":
                 NavMusic.IsChecked = true;
                 if (arg != null) _ = AddPlaylist(arg);

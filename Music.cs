@@ -66,7 +66,7 @@ static partial class Spotify
 
     // ---------- buttons ----------
 
-    public enum Command { PlayPause, Next, Previous, Play }
+    public enum Command { PlayPause, Next, Previous, Play, Pause }
 
     public static void Send(Command c)
     {
@@ -75,6 +75,7 @@ static partial class Spotify
             if (Platform.Windows)
             {
                 if (c == Command.Play && Status().Playing) return;
+                if (c == Command.Pause && !Status().Playing) return;
                 MediaKey(c switch { Command.Next => 0xB0, Command.Previous => 0xB1, _ => 0xB3 });
             }
             else if (Platform.Mac)
@@ -83,6 +84,7 @@ static partial class Spotify
                     Command.Next => "next track",
                     Command.Previous => "previous track",
                     Command.Play => "play",
+                    Command.Pause => "pause",
                     _ => "playpause",
                 });
             else if (Platform.Linux)
@@ -92,6 +94,7 @@ static partial class Spotify
                         Command.Next => "Next",
                         Command.Previous => "Previous",
                         Command.Play => "Play",
+                        Command.Pause => "Pause",
                         _ => "PlayPause",
                     });
         }

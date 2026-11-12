@@ -134,6 +134,18 @@ static partial class Platform
         finally { Marshal.FinalReleaseComObject(shell); }
     }
 
+    /// Opens a link (steam://, https://) with whatever handles it on this system.
+    public static void OpenUrl(string url)
+    {
+        if (Windows) Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
+        else
+        {
+            var psi = new ProcessStartInfo(Mac ? "open" : "xdg-open") { UseShellExecute = false };
+            psi.ArgumentList.Add(url);
+            Process.Start(psi);
+        }
+    }
+
     // ---------- messages & memory ----------
 
     public static void Message(string text)

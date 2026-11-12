@@ -36,12 +36,17 @@ The files aren't signed by Microsoft or Apple, so the first launch shows a warni
 - **Achievements**: every unlock by month, with search (Ctrl+F / Cmd+F), game and rarity filters
 - **Games**: cover-art grid with progress bars, sortable; click a game for its page:
   hero art, playtime, completion, and every achievement, including the ones still
-  to get (easiest first, by global rarity)
+  to get (easiest first, by global rarity). A **Play** button starts the game in Steam
+  (or **Install** if it isn't installed)
 - **Storage**: installed games by size, flags games not played in 6+ months
 - **Music**: save your Spotify playlists, albums or artists (paste a share link) and play
   them with one click; a mini-player in the sidebar shows the current song with
   previous / play-pause / next. It controls the Spotify app on your computer, so the
   music keeps playing when Trophyline is closed. No Spotify login needed.
+- **Game soundtracks**: give a game one of your playlists on its page. When you launch
+  that game, the background tracker starts the playlist (and pauses it when you quit,
+  if you like), even with the window closed
+- **Settings**: pick an accent colour for the whole window
 
 ## How it works
 
@@ -52,7 +57,9 @@ The files aren't signed by Microsoft or Apple, so the first launch shows a warni
 - Two things are fetched online and cached: global achievement rarity (Steam's public
   stats, refreshed weekly) and names of games Steam has no local name for.
 - The **tracker** (`--background`) is event-driven: it sleeps until Steam updates a
-  game's stats file, then records the unlock with its date. About 7 MB of memory,
+  game's stats file, then records the unlock with its date. It also notices when a
+  Steam game starts (Windows: waits on Steam's registry key; Linux/macOS: watches
+  `registry.vdf`) to start that game's soundtrack. About 7 MB of memory,
   lowest CPU priority. The **window** only uses memory while it's open.
 
 Steam is found automatically (Windows registry; `~/Library/Application Support/Steam`
@@ -71,7 +78,9 @@ Data folder: `%LOCALAPPDATA%\Trophyline` (Windows), `~/Library/Application Suppo
 - `journal.tsv`: every recorded unlock (tab-separated, easy to import elsewhere)
 - `journal.html`: the same journal as a web page
 - `icons/`, `rarity/`: cached pictures and rarity stats
-- `config.json`: `language` (e.g. `"german"`), and optional `steamFolder` / `statsFolder`
+- `music/`: saved playlists and `soundtracks.json` (which game plays which playlist)
+- `config.json`: `language` (e.g. `"german"`), `accent`, `hideSpotify`,
+  `pauseSoundtrackOnQuit`, and optional `steamFolder` / `statsFolder`
   if Steam is somewhere unusual
 
 ## Build

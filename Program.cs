@@ -87,6 +87,8 @@ static class Program
         var (cfg, statsFolder, steamFolder) = LoadSetup();
         using var watcher = new Watcher(cfg, statsFolder, steamFolder);
         watcher.Start(); // also catches up on anything unlocked while it wasn't running
+        using var games = new GameMonitor(steamFolder);
+        games.Start();   // plays a game's soundtrack when you launch it
         Platform.TrimMemory();
 
         Thread.Sleep(Timeout.Infinite); // sleeps here with no CPU use; --stop ends the process
@@ -280,6 +282,10 @@ public sealed class Config
     public string StatsFolder { get; set; } = "";
     /// Run Spotify as a background process with its window hidden (Windows).
     public bool HideSpotify { get; set; } = true;
+    /// Pause a game's soundtrack when you quit that game.
+    public bool PauseSoundtrackOnQuit { get; set; } = true;
+    /// Accent colour of the window, e.g. "#66C0F4".
+    public string Accent { get; set; } = Palette.Default;
 }
 
 [JsonSerializable(typeof(Config))]

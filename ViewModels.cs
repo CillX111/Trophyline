@@ -205,7 +205,7 @@ public sealed class GameVM(GameInfo g)
     public string PercentText => $"{G.Completion * 100:0}%";
     public bool HasAchievements => G.Total > 0;
     public bool Perfect => G.Perfect;
-    public IBrush ProgressBrush => G.Perfect ? Fmt.Gold : Fmt.Blue;
+    public IBrush ProgressBrush => G.Perfect ? Fmt.Gold : Palette.Brush;
     public IBrush CardBorder => G.Perfect ? Fmt.Gold : Fmt.None;
     public string CardSub => G.PlaytimeMinutes > 0
         ? $"{Fmt.Hours(G.PlaytimeMinutes)}  ·  {Fmt.Ago(G.LastPlayed)}"

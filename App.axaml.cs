@@ -22,6 +22,7 @@ public partial class App : Application
                 Program.LogError("ui: " + e.Exception);
                 e.Handled = true;
             };
+            Palette.Apply(Program.Settings().Accent);
             var window = new MainWindow();
             if (Args.Length > 0 && Args[0] == "--snapshot") PrepareSnapshot(desktop, window);
             desktop.MainWindow = window;

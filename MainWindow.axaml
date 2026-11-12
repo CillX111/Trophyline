@@ -104,7 +104,7 @@
                     <Image Source="/assets/logo.png" Width="40" Height="40"/>
                     <StackPanel VerticalAlignment="Center">
                         <TextBlock Text="Trophyline" FontWeight="Bold" FontSize="18"/>
-                        <TextBlock Text="STEAM ACHIEVEMENTS" FontSize="10" Foreground="{StaticResource Accent}" FontWeight="SemiBold"/>
+                        <TextBlock Text="STEAM ACHIEVEMENTS" FontSize="10" Foreground="{DynamicResource Accent}" FontWeight="SemiBold"/>
                     </StackPanel>
                 </StackPanel>
 
@@ -112,14 +112,7 @@
                 <Border DockPanel.Dock="Bottom" Margin="14" Padding="12" CornerRadius="12" Background="#121A23">
                     <StackPanel Orientation="Horizontal" Spacing="10">
                         <Panel Width="40" Height="40">
-                            <Ellipse>
-                                <Ellipse.Fill>
-                                    <LinearGradientBrush StartPoint="0%,0%" EndPoint="100%,100%">
-                                        <GradientStop Color="#66C0F4" Offset="0"/>
-                                        <GradientStop Color="#7B5CFF" Offset="1"/>
-                                    </LinearGradientBrush>
-                                </Ellipse.Fill>
-                            </Ellipse>
+                            <Ellipse Fill="{DynamicResource AccentAvatar}"/>
                             <TextBlock x:Name="AvatarLetter" HorizontalAlignment="Center" VerticalAlignment="Center"
                                        FontWeight="Bold" FontSize="17" Foreground="White"/>
                         </Panel>
@@ -168,6 +161,7 @@
                     <RadioButton x:Name="NavGames" Classes="nav" GroupName="nav" Tag="{StaticResource IconGame}" Content="Games"/>
                     <RadioButton x:Name="NavStorage" Classes="nav" GroupName="nav" Tag="{StaticResource IconDrive}" Content="Storage"/>
                     <RadioButton x:Name="NavMusic" Classes="nav" GroupName="nav" Tag="{StaticResource IconMusic}" Content="Music"/>
+                    <RadioButton x:Name="NavSettings" Classes="nav" GroupName="nav" Tag="{StaticResource IconSettings}" Content="Settings"/>
                 </StackPanel>
             </DockPanel>
         </Border>
@@ -199,7 +193,7 @@
                                 </Border.Background>
                             </Border>
                             <StackPanel VerticalAlignment="Bottom" Margin="32,0,0,30">
-                                <TextBlock Text="WELCOME BACK" Foreground="{StaticResource Accent}" FontWeight="Bold" FontSize="12"/>
+                                <TextBlock Text="WELCOME BACK" Foreground="{DynamicResource Accent}" FontWeight="Bold" FontSize="12"/>
                                 <TextBlock x:Name="Persona" FontSize="44" FontWeight="Bold" Margin="0,2,0,0"/>
                                 <TextBlock x:Name="HeroSub" Foreground="#C5D0DC" FontSize="15" Margin="0,4,0,0"/>
                             </StackPanel>
@@ -242,7 +236,7 @@
 
                     <DockPanel Margin="0,26,0,14">
                         <Button DockPanel.Dock="Right" Classes="plain" Click="ShowAllGames_Click" VerticalAlignment="Bottom">
-                            <TextBlock Text="See all games  →" Foreground="{StaticResource Accent}"/>
+                            <TextBlock Text="See all games  →" Foreground="{DynamicResource Accent}"/>
                         </Button>
                         <TextBlock Text="Most played" Classes="section"/>
                     </DockPanel>
@@ -285,7 +279,7 @@
                                         <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="15" TextWrapping="Wrap"/>
                                         <TextBlock Text="{Binding Description}" Classes="muted" FontSize="13" TextWrapping="Wrap" Margin="0,2,0,0"
                                                    IsVisible="{Binding HasDescription}"/>
-                                        <TextBlock Text="{Binding Game}" Foreground="{StaticResource Accent}" FontSize="13" Margin="0,3,0,0"
+                                        <TextBlock Text="{Binding Game}" Foreground="{DynamicResource Accent}" FontSize="13" Margin="0,3,0,0"
                                                    IsVisible="{Binding ShowGame}"/>
                                     </StackPanel>
                                     <Border Grid.Column="2" CornerRadius="10" Padding="8,2" Background="{Binding PillBackground}" Margin="0,0,14,0"
@@ -345,21 +339,40 @@
                             <TextBlock Text="Back"/>
                         </StackPanel>
                     </Button>
-                    <Panel VerticalAlignment="Bottom" Margin="30,0,30,14">
+                    <Grid VerticalAlignment="Bottom" Margin="30,0,30,14" ColumnDefinitions="*,Auto">
                         <Image x:Name="GameLogo" MaxHeight="120" MaxWidth="420" HorizontalAlignment="Left"/>
                         <TextBlock x:Name="GameTitle" FontSize="38" FontWeight="Bold" TextWrapping="Wrap" VerticalAlignment="Bottom"/>
-                    </Panel>
+                        <Button x:Name="GamePlay" Grid.Column="1" Classes="primary" Click="PlayGame_Click" VerticalAlignment="Bottom" Margin="20,0,0,4">
+                            <StackPanel Orientation="Horizontal" Spacing="10">
+                                <PathIcon x:Name="GamePlayIcon" Data="{StaticResource IconPlay}" Width="18" Height="18"/>
+                                <TextBlock x:Name="GamePlayText" Text="Play" VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </Button>
+                    </Grid>
                 </Panel>
                 <StackPanel Grid.Row="1" Margin="30,4,30,0">
                     <WrapPanel x:Name="GameStats"/>
                     <ProgressBar x:Name="GameBar" Margin="0,14,0,0" Height="8" MinHeight="8" CornerRadius="4" Minimum="0" Maximum="1"
-                                 Background="{StaticResource Line}" Foreground="{StaticResource Accent}">
+                                 Background="{StaticResource Line}" Foreground="{DynamicResource Accent}">
                         <ProgressBar.Transitions>
                             <Transitions>
                                 <DoubleTransition Property="Value" Duration="0:0:0.7" Easing="CubicEaseOut"/>
                             </Transitions>
                         </ProgressBar.Transitions>
                     </ProgressBar>
+                    <Border Classes="card" Padding="14,10" Margin="0,14,0,0">
+                        <Grid ColumnDefinitions="Auto,*,Auto">
+                            <Border Width="36" Height="36" CornerRadius="8" Background="{StaticResource SpotifyGreen}">
+                                <PathIcon Data="{StaticResource IconMusic}" Width="16" Height="16" Foreground="#0B1016"/>
+                            </Border>
+                            <StackPanel Grid.Column="1" Margin="12,0" VerticalAlignment="Center">
+                                <TextBlock Text="Soundtrack" FontWeight="SemiBold"/>
+                                <TextBlock x:Name="SoundtrackHint" Classes="muted" FontSize="12" TextWrapping="Wrap"
+                                           Text="Pick a playlist and it starts in the background whenever you launch this game."/>
+                            </StackPanel>
+                            <ComboBox x:Name="GameSoundtrack" Grid.Column="2" Classes="drop" MinWidth="240" VerticalAlignment="Center"/>
+                        </Grid>
+                    </Border>
                     <StackPanel x:Name="GameChips" Orientation="Horizontal" Margin="0,18,0,4">
                         <RadioButton x:Name="ChipAll" Classes="chip" GroupName="gameFilter" Content="All" IsChecked="True"/>
                         <RadioButton x:Name="ChipUnlocked" Classes="chip" GroupName="gameFilter" Content="Unlocked"/>
@@ -423,14 +436,8 @@
                                                     </Border>
                                                 </StackPanel>
                                                 <TextBlock Text="{Binding StorageSub}" Classes="muted" FontSize="13" Margin="0,3,0,8"/>
-                                                <ProgressBar Classes="thin" Height="6" MinHeight="6" Value="{Binding SizeFraction}" Background="{StaticResource Line}">
-                                                    <ProgressBar.Foreground>
-                                                        <LinearGradientBrush StartPoint="0%,0%" EndPoint="100%,0%">
-                                                            <GradientStop Color="#66C0F4" Offset="0"/>
-                                                            <GradientStop Color="#7B5CFF" Offset="1"/>
-                                                        </LinearGradientBrush>
-                                                    </ProgressBar.Foreground>
-                                                </ProgressBar>
+                                                <ProgressBar Classes="thin" Height="6" MinHeight="6" Value="{Binding SizeFraction}" Background="{StaticResource Line}"
+                                                             Foreground="{DynamicResource AccentGradient}"/>
                                             </StackPanel>
                                             <TextBlock Grid.Column="2" Text="{Binding SizeText}" FontSize="20" FontWeight="SemiBold"
                                                        VerticalAlignment="Center" MinWidth="90" TextAlignment="Right"/>
@@ -514,6 +521,30 @@
                     </Panel>
                 </ScrollViewer>
             </Grid>
+
+            <!-- Settings -->
+            <ScrollViewer x:Name="SettingsPage" IsVisible="False">
+                <StackPanel Margin="30,26,30,30" MaxWidth="900" HorizontalAlignment="Left">
+                    <TextBlock Text="Settings" Classes="pageTitle"/>
+                    <TextBlock Classes="muted" Margin="0,4,0,0" Text="Saved straight away."/>
+
+                    <TextBlock Text="Accent colour" Classes="section" Margin="0,26,0,4"/>
+                    <TextBlock Classes="muted" FontSize="13" Margin="0,0,0,16" TextWrapping="Wrap"
+                               Text="Colours the menu, buttons, progress bars and the activity calendar."/>
+                    <WrapPanel x:Name="AccentPicker"/>
+
+                    <TextBlock Text="Game soundtracks" Classes="section" Margin="0,20,0,4"/>
+                    <TextBlock Classes="muted" FontSize="13" Margin="0,0,0,14" TextWrapping="Wrap"
+                               Text="Give a game a playlist on its page (Games → pick a game → Soundtrack). The background tracker starts it when you launch the game, even when this window is closed."/>
+                    <Border Classes="card" Padding="16,12">
+                        <StackPanel>
+                            <ToggleSwitch x:Name="PauseOnQuitSwitch" OnContent="" OffContent="" Padding="0" MinWidth="0"
+                                          Content="Pause the music when I quit the game"/>
+                            <TextBlock x:Name="SoundtrackCount" Classes="muted" FontSize="12" Margin="0,2,0,0" TextWrapping="Wrap"/>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </ScrollViewer>
 
             <!-- loading / problem overlay -->
             <Border x:Name="Overlay" Background="{StaticResource Bg}" IsVisible="False">

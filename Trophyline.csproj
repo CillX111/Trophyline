@@ -22,6 +22,8 @@
     <!-- Keep the background tracker small: workstation GC, no extras.
          The window (Avalonia) is only loaded when you open it. -->
     <PublishSingleFile Condition="'$(PublishAot)' != 'true'">true</PublishSingleFile>
+    <!-- Put the graphics libraries (SkiaSharp, HarfBuzz, ANGLE) inside the one exe, so copying just the exe works. -->
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <SelfContained>false</SelfContained>
     <TieredPGO>false</TieredPGO>
     <OptimizationPreference>Size</OptimizationPreference>

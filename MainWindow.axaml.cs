@@ -75,23 +75,7 @@ public partial class MainWindow : Window
         foreach (var (rb, key) in new[] { (BoardSeason, "season"), (BoardXp, "xp"), (BoardPerfect, "perfect"), (BoardOver75, "over75") })
             rb.IsCheckedChanged += async (_, _) => { if (rb.IsChecked == true) { board = key; await LoadLeaderboard(); } };
         SeasonPick.SelectionChanged += async (_, _) => { if (!fillingSeasons) await LoadLeaderboard(); };
-        OnlineSwitch.IsCheckedChanged += async (_, _) =>
-        {
-            if (fillingSettings) return;
-            if (OnlineSwitch.IsChecked == true)
-            {
-                var name = (OnlineNameBox.Text ?? "").Trim();
-                if (name.Length == 0) name = data?.PersonaName ?? "Player";
-                Online.Enable(name);
-                OnlineNameBox.Text = name;
-                await UploadNow();
-            }
-            else
-            {
-                var err = await Online.Disable();
-                OnlineStatus.Text = err == null ? "You're offline. Your entry was removed from the server." : "Turned off, but couldn't reach the server: " + err;
-            }
-        };
+        PassBox.KeyDown += (_, e) => { if (e.Key == Key.Enter) { e.Handled = true; Login_Click(null, new RoutedEventArgs()); } };
         NavLevel.IsCheckedChanged += (_, _) => { if (NavLevel.IsChecked == true && !syncingNav) { ShowPage(LevelPage); AnimateLevelBar(); } };
         NavPlaytime.IsCheckedChanged += (_, _) => { if (NavPlaytime.IsChecked == true && !syncingNav) { BuildPlaytime(); ShowPage(PlaytimePage); } };
         nowTimer.Tick += (_, _) => { if (PlaytimePage.IsVisible) UpdateNowPlaying(); };
@@ -801,14 +785,13 @@ public partial class MainWindow : Window
                 UpdateStatus.Text = $"You have version {Updater.Current.ToString(3)}."
                     + (Platform.Mac ? " On macOS, Trophyline tells you about new versions; you download them yourself." : "");
             DeleteAccountButton.IsEnabled = cfg.OnlineId.Length > 0;
-            if (cfg.OnlineId.Length == 0) DeleteAccountHint.Text = "You don't have an online account on this computer.";
-            OnlineSwitch.IsChecked = cfg.OnlineEnabled;
-            OnlineSwitch.IsEnabled = Online.Available;
+            if (cfg.OnlineId.Length == 0) DeleteAccountHint.Text = "You're not logged in. Log in first to delete an account.";
+            ShowAccountState();
             OnlineNameBox.Text = cfg.OnlineName.Length > 0 ? cfg.OnlineName : data?.PersonaName ?? "";
             BuildLinkBoxes();
             ShowMyPicture();
             OnlineStatus.Text = !Online.Available ? "The Trophyline server isn't set up yet, so this can't be turned on."
-                : cfg.OnlineEnabled ? $"You're on the leaderboards as \"{cfg.OnlineName}\"." : "You're not on the leaderboards.";
+                : Online.Enabled ? $"You're on the leaderboards as \"{cfg.OnlineName}\"." : "You're not on the leaderboards.";
             int n = SoundtrackStore.Load().Count;
             SoundtrackCount.Text = (n == 0 ? "No game has a soundtrack yet." : $"{n} game{(n == 1 ? " has" : "s have")} a soundtrack.")
                 + (Program.TrackerRunning() ? "" : "  The background tracker isn't running, so soundtracks won't start.");
@@ -1044,14 +1027,89 @@ public partial class MainWindow : Window
                 : "Couldn't reach the server: " + err;
     }
 
-    async void Join_Click(object? sender, RoutedEventArgs e)
+    void Join_Click(object? sender, RoutedEventArgs e)
     {
-        var name = (JoinName.Text ?? "").Trim();
-        if (name.Length == 0) { JoinHint.Text = "Type a name first."; return; }
-        Online.Enable(name);
-        JoinHint.Text = "Joining…";
+        NavSettings.IsChecked = true; // the account form is there
+        UserBox.Focus();
+    }
+
+    async Task SnapshotAccount(string? arg)
+    {
+        var p = (arg ?? "").Split(',');
+        _ = Task.Delay(1500).ContinueWith(_ => Dispatcher.UIThread.Post(() => ((ScrollViewer)SettingsPage).Offset = new Vector(0, 700)));
+        if (p[0] == "logout") { Logout_Click(null, new RoutedEventArgs()); return; }
+        if (p.Length < 3) return;
+        UserBox.Text = p[1];
+        PassBox.Text = p[2];
+        if (p[0] == "register") Register_Click(null, new RoutedEventArgs()); else Login_Click(null, new RoutedEventArgs());
+        await Task.CompletedTask;
+    }
+
+    // ----- account: create, log in, log out -----
+
+    void ShowAccountState()
+    {
+        bool loggedIn = Online.LoggedIn, legacy = Online.NeedsLogin;
+        LoggedOutPanel.IsVisible = !loggedIn || legacy;
+        LoggedInPanel.IsVisible = loggedIn && !legacy;
+        LoginButton.IsVisible = !legacy;
+        AccountIntro.Text = legacy
+            ? "Your profile was made before accounts existed. Give it a username and password to keep it (and to log in on other computers)."
+            : "Create an account or log in";
+        RegisterText.Text = legacy ? "Save login for my profile" : "Create account";
+        LoggedInAs.Text = $"Logged in as {Online.Username}";
+        if (legacy && string.IsNullOrEmpty(UserBox.Text))
+            UserBox.Text = new string(Program.Settings().OnlineName.Where(c => char.IsAsciiLetterOrDigit(c) || c == '_').Take(20).ToArray());
+    }
+
+    void AccountNote(string? text, bool good = false)
+    {
+        AccountMsg.IsVisible = !string.IsNullOrEmpty(text);
+        AccountMsg.Text = text ?? "";
+        AccountMsg.Foreground = good ? Fmt.Green : Fmt.Orange;
+    }
+
+    async Task FinishLogin(string? err, string doneText)
+    {
+        if (err != null) { AccountNote(err); return; }
+        PassBox.Text = "";
+        AccountNote(doneText, good: true);
+        seasonIds.Clear();
+        BuildSettings();
         await UploadNow();
-        await LoadLeaderboard();
+    }
+
+    async void Login_Click(object? sender, RoutedEventArgs e)
+    {
+        if (string.IsNullOrWhiteSpace(UserBox.Text) || string.IsNullOrEmpty(PassBox.Text)) { AccountNote("Type your username and password."); return; }
+        AccountNote("Logging in…", good: true);
+        await FinishLogin(await Online.Login(UserBox.Text!, PassBox.Text!), "You're logged in.");
+    }
+
+    async void Register_Click(object? sender, RoutedEventArgs e)
+    {
+        if (string.IsNullOrWhiteSpace(UserBox.Text) || string.IsNullOrEmpty(PassBox.Text)) { AccountNote("Pick a username and a password."); return; }
+        AccountNote("One moment…", good: true);
+        bool legacy = Online.NeedsLogin;
+        var err = legacy ? await Online.Claim(UserBox.Text!, PassBox.Text!) : await Online.Register(UserBox.Text!, PassBox.Text!);
+        await FinishLogin(err, legacy ? "Done. Your profile now has a login." : "Account created. You're on the leaderboards now.");
+    }
+
+    async void Logout_Click(object? sender, RoutedEventArgs e)
+    {
+        await Online.Logout();
+        AccountNote("Logged out. Your account and your place on the leaderboards are still there.", good: true);
+        seasonIds.Clear();
+        BuildSettings();
+    }
+
+    async void ChangePassword_Click(object? sender, RoutedEventArgs e)
+    {
+        if (string.IsNullOrEmpty(OldPassBox.Text) || string.IsNullOrEmpty(NewPassBox.Text)) { AccountNote("Type your current and your new password."); return; }
+        var err = await Online.ChangePassword(OldPassBox.Text!, NewPassBox.Text!);
+        if (err != null) { AccountNote(err); return; }
+        OldPassBox.Text = NewPassBox.Text = "";
+        AccountNote("Password changed. Other computers were logged out.", good: true);
     }
 
     async void SaveOnlineName_Click(object? sender, RoutedEventArgs e)
@@ -1062,7 +1120,7 @@ public partial class MainWindow : Window
         cfg.OnlineName = name;
         Program.SaveSettings(cfg);
         if (Online.Enabled) await UploadNow();
-        else OnlineStatus.Text = "Name saved. Turn the switch on to join.";
+        else OnlineStatus.Text = "Name saved. It shows once you're logged in.";
     }
 
     async void LbRefresh_Click(object? sender, RoutedEventArgs e)
@@ -2066,6 +2124,10 @@ public partial class MainWindow : Window
             case "playtime": NavPlaytime.IsChecked = true; break;
             case "level": NavLevel.IsChecked = true; break;
             case "welcome": WelcomeOverlay.IsVisible = true; break;
+            case "account": // dev check: "register,user,pass" / "login,user,pass" / "logout" / (nothing)
+                NavSettings.IsChecked = true;
+                _ = SnapshotAccount(arg);
+                break;
             case "shop": NavShop.IsChecked = true; break;
             case "chat":
                 if (arg != null) _ = OpenChat(arg, "NightOwl"); else NavChat.IsChecked = true;

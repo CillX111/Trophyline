@@ -663,10 +663,10 @@
                             <StackPanel VerticalAlignment="Center">
                                 <TextBlock Text="Join the leaderboards" FontWeight="SemiBold" FontSize="15"/>
                                 <TextBlock x:Name="JoinHint" Classes="muted" FontSize="12" TextWrapping="Wrap"
-                                           Text="Pick a name. Shared: that name, your level, XP, game counts, icon, top games and latest unlocks."/>
+                                           Text="Create a free Trophyline account (username and password) or log in. Shared: your name, level, XP, game counts, icon, top games and latest unlocks."/>
                             </StackPanel>
-                            <TextBox x:Name="JoinName" Grid.Column="2" Classes="search" Watermark="Your name" MaxLength="24"/>
-                            <Button Grid.Column="4" Classes="primary" Click="Join_Click" Content="Join"/>
+                            <TextBox x:Name="JoinName" Grid.Column="2" IsVisible="False"/>
+                            <Button Grid.Column="4" Classes="primary" Click="Join_Click" Content="Create account / Log in"/>
                         </Grid>
                     </Border>
 
@@ -878,13 +878,47 @@
                         </Grid>
                     </Border>
 
-                    <TextBlock Text="Online leaderboards" Classes="section" Margin="0,20,0,4"/>
+                    <TextBlock Text="Trophyline account" Classes="section" Margin="0,20,0,4"/>
                     <TextBlock Classes="muted" FontSize="13" Margin="0,0,0,14" TextWrapping="Wrap"
-                               Text="Shared when this is on: your display name, level, XP, season XP, game counts, equipped icon, top games and latest unlocks. Never your Steam login. Turning it off removes you from the server."/>
+                               Text="An account puts you on the online leaderboards and in the chat, and lets you log in on any computer. Shared while you're logged in: your display name, level, XP, season XP, game counts, equipped icon, top games and latest unlocks. Never your Steam login."/>
                     <Border Classes="card" Padding="16,12" Margin="0,0,0,10">
                         <StackPanel Spacing="10">
-                            <ToggleSwitch x:Name="OnlineSwitch" OnContent="" OffContent="" Padding="0" MinWidth="0"
-                                          Content="Show me on the online leaderboards"/>
+                            <ToggleSwitch x:Name="OnlineSwitch" IsVisible="False"/>
+
+                            <!-- not logged in (or an old profile that still needs a login) -->
+                            <StackPanel x:Name="LoggedOutPanel" Spacing="10">
+                                <TextBlock x:Name="AccountIntro" FontWeight="SemiBold" TextWrapping="Wrap" Text="Create an account or log in"/>
+                                <Grid ColumnDefinitions="220,12,220">
+                                    <TextBox x:Name="UserBox" Classes="search" Watermark="Username" MaxLength="20"/>
+                                    <TextBox x:Name="PassBox" Grid.Column="2" Classes="search" Watermark="Password (8+ characters)" PasswordChar="&#8226;" MaxLength="200"/>
+                                </Grid>
+                                <StackPanel Orientation="Horizontal" Spacing="10">
+                                    <Button x:Name="LoginButton" Classes="primary" Click="Login_Click" MinHeight="0" Padding="0">
+                                        <TextBlock Text="Log in" Margin="0,9"/>
+                                    </Button>
+                                    <Button Classes="pill" Click="Register_Click" VerticalAlignment="Center">
+                                        <TextBlock x:Name="RegisterText" Text="Create account"/>
+                                    </Button>
+                                </StackPanel>
+                                <TextBlock Classes="muted" FontSize="12" TextWrapping="Wrap"
+                                           Text="Pick a password you don't use anywhere else. Don't use your Steam password. There's no email, so a forgotten password can't be reset: write it down."/>
+                            </StackPanel>
+
+                            <!-- logged in -->
+                            <StackPanel x:Name="LoggedInPanel" Spacing="10" IsVisible="False">
+                                <Grid ColumnDefinitions="*,Auto">
+                                    <TextBlock x:Name="LoggedInAs" FontWeight="SemiBold" VerticalAlignment="Center" TextWrapping="Wrap"/>
+                                    <Button Grid.Column="1" Classes="pill" Click="Logout_Click"><TextBlock Text="Log out"/></Button>
+                                </Grid>
+                                <Grid ColumnDefinitions="200,10,200,10,Auto">
+                                    <TextBox x:Name="OldPassBox" Classes="search" Watermark="Current password" PasswordChar="&#8226;" MaxLength="200"/>
+                                    <TextBox x:Name="NewPassBox" Grid.Column="2" Classes="search" Watermark="New password" PasswordChar="&#8226;" MaxLength="200"/>
+                                    <Button Grid.Column="4" Classes="pill" Click="ChangePassword_Click" VerticalAlignment="Center"><TextBlock Text="Change password"/></Button>
+                                </Grid>
+                            </StackPanel>
+                            <TextBlock x:Name="AccountMsg" FontSize="12" TextWrapping="Wrap" Foreground="#FFB86B" IsVisible="False"/>
+
+                            <TextBlock Text="Display name" FontWeight="SemiBold" Margin="0,8,0,0"/>
                             <Grid ColumnDefinitions="260,12,Auto">
                                 <TextBox x:Name="OnlineNameBox" Classes="search" Watermark="Display name" MaxLength="24"/>
                                 <Button Grid.Column="2" Classes="pill" Click="SaveOnlineName_Click" VerticalAlignment="Center">

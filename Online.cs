@@ -73,16 +73,75 @@ static class Online
         return string.Concat(Enumerable.Range(0, length).Select(_ => abc[RandomNumberGenerator.GetInt32(abc.Length)]));
     }
 
-    /// Turns online on with a display name (creates this computer's id and secret the first time).
-    public static void Enable(string name)
+    // ---------- accounts ----------
+
+    /// Logged in on this computer (with an account, or a profile from before accounts existed).
+    public static bool LoggedIn => Program.Settings().OnlineId.Length > 0;
+
+    /// A profile from before accounts existed: it still needs a username and password.
+    public static bool NeedsLogin => LoggedIn && Program.Settings().OnlineUser.Length == 0;
+
+    public static string Username => Program.Settings().OnlineUser;
+
+    /// Runs tl_register / tl_login / tl_claim and remembers the session. Returns an error text or null.
+    static async Task<string?> StartSession(string fn, JsonObject args)
     {
+        if (!Available) return "The Trophyline server isn't set up.";
+        var (r, err) = await Rpc(fn, args);
+        if (err != null) return err;
+        if (r?["error"]?.GetValue<string>() is string problem) return problem;
+        var id = r?["id"]?.GetValue<string>();
+        var secret = r?["secret"]?.GetValue<string>();
+        if (string.IsNullOrEmpty(id) || string.IsNullOrEmpty(secret)) return "The server gave an unexpected answer.";
         var cfg = Program.Settings();
-        if (cfg.OnlineId.Length == 0) cfg.OnlineId = Random(24);
-        if (cfg.OnlineSecret.Length == 0) cfg.OnlineSecret = Random(48);
-        cfg.OnlineName = name.Trim();
+        bool sameProfile = cfg.OnlineId == id;
+        cfg.OnlineId = id;
+        cfg.OnlineSecret = secret;
+        cfg.OnlineUser = r?["username"]?.GetValue<string>() ?? "";
+        cfg.OnlineName = r?["name"]?.GetValue<string>() is { Length: > 0 } n ? n : cfg.OnlineUser;
         cfg.OnlineEnabled = true;
-        if (cfg.OnlineSteamAccount.Length == 0) cfg.OnlineSteamAccount = SteamAccounts.Current()?.Id64 ?? "";
+        if (!sameProfile) { cfg.OnlineSteamAccount = ""; cfg.AvatarHash = ""; }
         Program.SaveSettings(cfg);
+        lastUpload = default;
+        return null;
+    }
+
+    public static Task<string?> Register(string username, string password) =>
+        StartSession("tl_register", new JsonObject { ["p_username"] = username.Trim(), ["p_password"] = password });
+
+    public static Task<string?> Login(string username, string password) =>
+        StartSession("tl_login", new JsonObject { ["p_username"] = username.Trim(), ["p_password"] = password });
+
+    /// Gives the profile already on this computer a username and password.
+    public static Task<string?> Claim(string username, string password)
+    {
+        var args = Me();
+        args["p_username"] = username.Trim();
+        args["p_password"] = password;
+        return StartSession("tl_claim", args);
+    }
+
+    /// Logs this computer out. The account and its place on the leaderboards stay.
+    public static async Task Logout()
+    {
+        if (Available && LoggedIn) await Rpc("tl_logout", Me());
+        var cfg = Program.Settings();
+        cfg.OnlineEnabled = false;
+        cfg.OnlineId = "";
+        cfg.OnlineSecret = "";
+        cfg.OnlineUser = "";
+        cfg.OnlineSteamAccount = "";
+        cfg.AvatarHash = "";
+        Program.SaveSettings(cfg);
+    }
+
+    public static async Task<string?> ChangePassword(string oldPassword, string newPassword)
+    {
+        var args = Me();
+        args["p_old"] = oldPassword;
+        args["p_new"] = newPassword;
+        var (r, err) = await Rpc("tl_change_password", args);
+        return err ?? r?["error"]?.GetValue<string>();
     }
 
     /// Turns online off and deletes your entry (and your chat messages) from the server.
@@ -110,6 +169,7 @@ static class Online
         cfg.OnlineEnabled = false;
         cfg.OnlineId = "";
         cfg.OnlineSecret = "";
+        cfg.OnlineUser = "";
         cfg.OnlineSteamAccount = "";
         cfg.AvatarHash = "";
         Program.SaveSettings(cfg);

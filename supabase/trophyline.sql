@@ -63,6 +63,26 @@ create table if not exists avatars (
   updated bigint not null
 );
 
+-- accounts: a username and password, so you can log in on any computer
+alter table players add column if not exists username   text;                        -- null = old profile without a login
+alter table players add column if not exists pw_salt    text;
+alter table players add column if not exists pw_hash    text;
+alter table players add column if not exists fail_count int not null default 0;      -- wrong passwords in a row
+alter table players add column if not exists fail_time  bigint not null default 0;
+alter table players add column if not exists banned     boolean not null default false; -- set to true in the Table Editor to ban a cheater
+create unique index if not exists players_username on players (lower(username)) where username is not null;
+
+-- one row per computer that is logged in
+create table if not exists sessions (
+  token_hash text primary key,
+  player     text not null references players(id) on delete cascade,
+  created    bigint not null,
+  used       bigint not null
+);
+create index if not exists sessions_player on sessions (player);
+alter table sessions enable row level security;
+revoke all on sessions from anon, authenticated;
+
 alter table players enable row level security;
 alter table season_scores enable row level security;
 alter table messages enable row level security;
@@ -95,11 +115,45 @@ set search_path = public, extensions as $$
   select encode(sha256(convert_to(secret, 'UTF8')), 'hex')
 $$;
 
--- the player whose secret this is, or null
+-- the player this secret belongs to (a login session, or an old profile's own secret), or null.
+-- Banned players can't do anything.
 create or replace function tl_auth(p_id text, p_secret text) returns text language sql stable
 set search_path = public, extensions as $$
-  select id from players where id = p_id and secret_hash = tl_hash(coalesce(p_secret, ''))
+  select id from players
+  where id = p_id and not banned
+    and (secret_hash = tl_hash(coalesce(p_secret, ''))
+         or exists (select 1 from sessions s where s.player = p_id and s.token_hash = tl_hash(coalesce(p_secret, ''))))
 $$;
+
+-- password fingerprint: salted SHA-256, repeated 20000 times (slow on purpose, to make guessing expensive)
+create or replace function tl_pwhash(p_password text, p_salt text) returns text language plpgsql immutable as $$
+declare
+  h bytea := sha256(convert_to(p_salt || p_password, 'UTF8'));
+  pw bytea := convert_to(p_password, 'UTF8');
+begin
+  for i in 1..20000 loop
+    h := sha256(h || pw);
+  end loop;
+  return encode(h, 'hex');
+end $$;
+
+create or replace function tl_token() returns text language sql volatile as $$
+  select replace(gen_random_uuid()::text, '-', '') || replace(gen_random_uuid()::text, '-', '')
+$$;
+
+-- starts a login session for a player and returns what the app needs to remember
+create or replace function tl_session(p_player text) returns jsonb language plpgsql
+set search_path = public, extensions as $$
+declare
+  token text := tl_token();
+  v_now bigint := tl_now();
+  pl players;
+begin
+  delete from sessions where used < v_now - 180 * 86400;
+  insert into sessions (token_hash, player, created, used) values (tl_hash(token), p_player, v_now, v_now);
+  select * into pl from players where id = p_player;
+  return jsonb_build_object('ok', true, 'id', pl.id, 'secret', token, 'username', pl.username, 'name', pl.name);
+end $$;
 
 -- ---------- seasons: every 3 months (calendar quarters, UTC); Season 1 = Oct-Dec 2026 ----------
 
@@ -132,7 +186,7 @@ $$;
 
 create or replace function tl_status() returns jsonb language sql stable security definer
 set search_path = public, extensions as $$
-  select jsonb_build_object('ok', true, 'season', tl_season(), 'players', (select count(*) from players))
+  select jsonb_build_object('ok', true, 'season', tl_season(), 'players', (select count(*) from players where not banned))
 $$;
 
 create or replace function tl_upsert(p jsonb) returns jsonb language plpgsql security definer
@@ -142,9 +196,8 @@ declare
   v_secret text := p->>'secret';
   v_name text := tl_clean(p->>'name', 24);
   v_now bigint := tl_now();
-  v_hash text;
-  v_old_hash text;
   v_old_updated bigint;
+  v_banned boolean;
   v_profile jsonb := coalesce(p->'profile', '{}'::jsonb);
   cur jsonb := tl_season();
   prev jsonb := tl_season_prev(tl_season());
@@ -155,22 +208,21 @@ begin
   if v_secret is null or length(v_secret) < 24 or length(v_secret) > 128 then raise exception 'bad secret'; end if;
   if v_name = '' then raise exception 'name required'; end if;
   if length(v_profile::text) > 24000 then raise exception 'profile too big'; end if;
-  v_hash := tl_hash(v_secret);
 
-  select secret_hash, updated into v_old_hash, v_old_updated from players where id = v_id;
-  if v_old_hash is not null and v_old_hash <> v_hash then raise exception 'not your profile'; end if;
-  if v_old_hash is not null and v_now - v_old_updated < 10 then raise exception 'too often'; end if;
+  -- only an existing account can upload (create one with tl_register)
+  select updated, banned into v_old_updated, v_banned from players where id = v_id;
+  if v_old_updated is null then raise exception 'create an account first (update Trophyline if you can''t find it)'; end if;
+  if v_banned then raise exception 'this account was banned'; end if;
+  if tl_auth(v_id, v_secret) is null then raise exception 'not your profile'; end if;
+  if v_now - v_old_updated < 10 then raise exception 'too often'; end if;
 
-  insert into players (id, secret_hash, name, level, rank, xp, perfect, over75, unlocked, games, hours, profile, created, updated)
-  values (v_id, v_hash, v_name,
-          tl_int(p->>'level', 10000), coalesce(nullif(tl_clean(p->>'rank', 24), ''), 'Rookie'),
-          tl_int(p->>'xp', 50000000), tl_int(p->>'perfect', 100000), tl_int(p->>'over75', 100000),
-          tl_int(p->>'unlocked', 10000000), tl_int(p->>'games', 100000), tl_int(p->>'hours', 10000000),
-          v_profile, v_now, v_now)
-  on conflict (id) do update set
-    name = excluded.name, level = excluded.level, rank = excluded.rank, xp = excluded.xp,
-    perfect = excluded.perfect, over75 = excluded.over75, unlocked = excluded.unlocked,
-    games = excluded.games, hours = excluded.hours, profile = excluded.profile, updated = excluded.updated;
+  update players set
+    name = v_name, level = tl_int(p->>'level', 10000), rank = coalesce(nullif(tl_clean(p->>'rank', 24), ''), 'Rookie'),
+    xp = tl_int(p->>'xp', 50000000), perfect = tl_int(p->>'perfect', 100000), over75 = tl_int(p->>'over75', 100000),
+    unlocked = tl_int(p->>'unlocked', 10000000), games = tl_int(p->>'games', 100000), hours = tl_int(p->>'hours', 10000000),
+    profile = v_profile, updated = v_now
+  where id = v_id;
+  update sessions set used = v_now where token_hash = tl_hash(v_secret);
 
   -- season XP: the current season, and the previous one during the first week of a new season
   for s in select value from jsonb_array_elements(case when jsonb_typeof(p->'seasons') = 'array' then p->'seasons' else '[]'::jsonb end) limit 2 loop
@@ -195,6 +247,104 @@ begin
   return jsonb_build_object('ok', true);
 end $$;
 
+-- ---------- accounts: register, log in, log out ----------
+-- These return {"error": "..."} instead of failing, so a wrong password can be counted.
+
+create or replace function tl_check_login(p_username text, p_password text) returns text language sql immutable as $$
+  select case
+    when coalesce(p_username, '') !~ '^[A-Za-z0-9_]{3,20}$' then 'Usernames are 3 to 20 letters, numbers or _'
+    when length(coalesce(p_password, '')) < 8 then 'The password needs at least 8 characters'
+    when length(p_password) > 200 then 'That password is too long'
+    when lower(p_password) = lower(p_username) then 'The password can''t be your username'
+  end
+$$;
+
+create or replace function tl_register(p_username text, p_password text) returns jsonb language plpgsql security definer
+set search_path = public, extensions as $$
+declare
+  problem text := tl_check_login(p_username, p_password);
+  v_id text := replace(gen_random_uuid()::text, '-', '');
+  v_salt text := tl_token();
+  v_now bigint := tl_now();
+begin
+  if problem is not null then return jsonb_build_object('error', problem); end if;
+  if exists (select 1 from players where lower(username) = lower(p_username)) then
+    return jsonb_build_object('error', 'That username is taken');
+  end if;
+  insert into players (id, secret_hash, name, username, pw_salt, pw_hash, created, updated)
+  values (v_id, '', p_username, p_username, v_salt, tl_pwhash(p_password, v_salt), v_now, v_now - 60);
+  return tl_session(v_id);
+end $$;
+
+create or replace function tl_login(p_username text, p_password text) returns jsonb language plpgsql security definer
+set search_path = public, extensions as $$
+declare
+  pl players;
+  v_now bigint := tl_now();
+begin
+  select * into pl from players where lower(username) = lower(coalesce(p_username, ''));
+  if pl.id is null then return jsonb_build_object('error', 'Wrong username or password'); end if;
+  if pl.banned then return jsonb_build_object('error', 'This account was banned'); end if;
+  if pl.fail_count >= 5 and v_now - pl.fail_time < 300 then
+    return jsonb_build_object('error', 'Too many wrong passwords. Wait 5 minutes and try again');
+  end if;
+  if pl.pw_hash is distinct from tl_pwhash(coalesce(p_password, ''), pl.pw_salt) then
+    update players set fail_count = case when v_now - fail_time < 300 then fail_count + 1 else 1 end, fail_time = v_now where id = pl.id;
+    return jsonb_build_object('error', 'Wrong username or password');
+  end if;
+  update players set fail_count = 0 where id = pl.id;
+  return tl_session(pl.id);
+end $$;
+
+-- gives a profile from before accounts existed a username and password (it keeps everything)
+create or replace function tl_claim(p_id text, p_secret text, p_username text, p_password text) returns jsonb
+language plpgsql security definer
+set search_path = public, extensions as $$
+declare
+  problem text := tl_check_login(p_username, p_password);
+  v_salt text := tl_token();
+begin
+  if tl_auth(p_id, p_secret) is null then return jsonb_build_object('error', 'Not your profile'); end if;
+  if exists (select 1 from players where id = p_id and username is not null) then
+    return jsonb_build_object('error', 'This profile already has a login');
+  end if;
+  if problem is not null then return jsonb_build_object('error', problem); end if;
+  if exists (select 1 from players where lower(username) = lower(p_username)) then
+    return jsonb_build_object('error', 'That username is taken');
+  end if;
+  update players set username = p_username, pw_salt = v_salt, pw_hash = tl_pwhash(p_password, v_salt), secret_hash = '' where id = p_id;
+  return tl_session(p_id);
+end $$;
+
+create or replace function tl_logout(p_id text, p_secret text) returns jsonb language plpgsql security definer
+set search_path = public, extensions as $$
+begin
+  delete from sessions where player = p_id and token_hash = tl_hash(coalesce(p_secret, ''));
+  return jsonb_build_object('ok', true);
+end $$;
+
+-- changes the password and logs out every other computer
+create or replace function tl_change_password(p_id text, p_secret text, p_old text, p_new text) returns jsonb
+language plpgsql security definer
+set search_path = public, extensions as $$
+declare
+  pl players;
+  v_salt text := tl_token();
+  problem text;
+begin
+  if tl_auth(p_id, p_secret) is null then return jsonb_build_object('error', 'Log in again first'); end if;
+  select * into pl from players where id = p_id;
+  if pl.username is null then return jsonb_build_object('error', 'Create a login first'); end if;
+  if pl.pw_hash is distinct from tl_pwhash(coalesce(p_old, ''), pl.pw_salt) then
+    return jsonb_build_object('error', 'The current password is wrong');
+  end if;
+  problem := tl_check_login(pl.username, p_new);
+  if problem is not null then return jsonb_build_object('error', problem); end if;
+  update players set pw_salt = v_salt, pw_hash = tl_pwhash(p_new, v_salt) where id = p_id;
+  delete from sessions where player = p_id and token_hash <> tl_hash(coalesce(p_secret, ''));
+  return jsonb_build_object('ok', true);
+end $$;
+
 create or replace function tl_player(p_id text) returns jsonb language plpgsql stable security definer
 set search_path = public, extensions as $$
 declare
@@ -202,7 +352,7 @@ declare
   cur jsonb := tl_season();
   sxp bigint;
 begin
-  select * into pl from players where id = p_id;
+  select * into pl from players where id = p_id and not banned;
   if pl.id is null then raise exception 'no such player'; end if;
   select xp into sxp from season_scores where season = cur->>'id' and player = p_id;
   return jsonb_build_object(
@@ -234,7 +384,7 @@ begin
       select row_number() over (order by ss.xp desc, pl.xp desc) as pos, pl.id, pl.name, pl.level, pl.rank,
              coalesce(pl.profile->>'icon', '') as icon, pl.avatar_ver as avatar, ss.xp as value
       from season_scores ss join players pl on pl.id = ss.player
-      where ss.season = s->>'id' and ss.xp > 0
+      where ss.season = s->>'id' and ss.xp > 0 and not pl.banned
       order by ss.xp desc, pl.xp desc limit lim) r;
     select xp into mv from season_scores where season = s->>'id' and player = p_me;
     if mv is not null then
@@ -246,7 +396,7 @@ begin
       'select coalesce(jsonb_agg(to_jsonb(r) order by r.pos), ''[]''::jsonb) from (
          select row_number() over (order by %1$I desc, xp desc) as pos, id, name, level, rank,
                 coalesce(profile->>''icon'', '''') as icon, avatar_ver as avatar, %1$I::bigint as value
-         from players where %1$I > 0 order by %1$I desc, xp desc limit $1) r', p_board)
+         from players where %1$I > 0 and not banned order by %1$I desc, xp desc limit $1) r', p_board)
       into v_rows using lim;
     if p_me is not null then
       execute format('select %I::bigint from players where id = $1', p_board) into mv using p_me;
@@ -274,7 +424,7 @@ begin
     select coalesce(jsonb_agg(to_jsonb(r) order by r.value desc), '[]'::jsonb) into top from (
       select pl.id, pl.name, pl.level, pl.rank, coalesce(pl.profile->>'icon', '') as icon, pl.avatar_ver as avatar, ss.xp as value
       from season_scores ss join players pl on pl.id = ss.player
-      where ss.season = s->>'id' and ss.xp > 0 order by ss.xp desc limit 3) r;
+      where ss.season = s->>'id' and ss.xp > 0 and not pl.banned order by ss.xp desc limit 3) r;
     out := out || jsonb_build_array(s || jsonb_build_object('current', s->>'id' = cur->>'id', 'top', top));
     s := tl_season_prev(s);
   end loop;
@@ -321,7 +471,7 @@ set search_path = public, extensions as $$
   select jsonb_build_object('room', p_room, 'messages', coalesce(jsonb_agg(to_jsonb(r) order by r.id), '[]'::jsonb)) from (
     select m.id, m.sender, m.text, m.time, pl.name, pl.level, coalesce(pl.profile->>'icon', '') as icon, pl.avatar_ver as avatar
     from messages m join players pl on pl.id = m.sender
-    where m.room = p_room and m.id > coalesce(p_after, 0) and m.time > tl_now() - 3600
+    where m.room = p_room and m.id > coalesce(p_after, 0) and m.time > tl_now() - 3600 and not pl.banned
       and (p_viewer is null or m.sender not in (select blocked from blocks where player = p_viewer))
     order by m.id desc limit 100) r
 $$;
@@ -422,5 +572,7 @@ grant execute on function
   tl_leaderboard(text, text, text, int), tl_seasons(),
   tl_chat_send(jsonb), tl_chat_lobby(bigint, text, text), tl_chat_dm(text, text, text, bigint),
   tl_chat_inbox(text, text), tl_chat_block(text, text, text, boolean),
-  tl_set_avatar(text, text, text), tl_avatar(text)
+  tl_set_avatar(text, text, text), tl_avatar(text),
+  tl_register(text, text), tl_login(text, text), tl_claim(text, text, text, text),
+  tl_logout(text, text), tl_change_password(text, text, text, text)
 to anon, authenticated;

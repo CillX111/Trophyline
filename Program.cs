@@ -342,6 +342,8 @@ public sealed class Config
     /// Online leaderboards (off until you switch them on).
     public bool OnlineEnabled { get; set; }
     public string OnlineName { get; set; } = "";
+    /// Your Trophyline username (empty for a profile from before accounts existed).
+    public string OnlineUser { get; set; } = "";
     public string OnlineId { get; set; } = "";
     public string OnlineSecret { get; set; } = "";
     /// Leave empty to use the public Trophyline server (a Supabase project URL and its publishable key).

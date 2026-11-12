@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- WinExe = no console window; the app runs invisibly. -->
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <AssemblyName>Trophyline</AssemblyName>
+    <!-- The window (only loaded when you open the app; the background part never touches it). -->
+    <UseWPF>true</UseWPF>
+    <ApplicationIcon>app.ico</ApplicationIcon>
+    <Product>Trophyline</Product>
+    <!-- Exclude the one-off tooling and build output from compilation -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);tools\**;publish\**</DefaultItemExcludes>
+    <Version>1.0.0</Version>
+
+    <!-- Keep the footprint tiny: workstation GC, no extras.
+         Native AOT (even smaller) needs Visual Studio's C++ workload:
+         dotnet publish -c Release -r win-x64 -p:PublishAot=true -->
+    <PublishSingleFile Condition="'$(PublishAot)' != 'true'">true</PublishSingleFile>
+    <SelfContained>false</SelfContained>
+    <TieredPGO>false</TieredPGO>
+    <OptimizationPreference>Size</OptimizationPreference>
+    <!-- No InvariantGlobalization: WPF text boxes need the keyboard's culture. -->
+    <ServerGarbageCollector>false</ServerGarbageCollector>
+    <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
+    <JsonSerializerIsReflectionEnabledByDefault>false</JsonSerializerIsReflectionEnabledByDefault>
+    <DebuggerSupport>false</DebuggerSupport>
+    <EventSourceSupport>false</EventSourceSupport>
+    <StackTraceSupport>false</StackTraceSupport>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Resource Include="assets\logo.png" />
+  </ItemGroup>
+
+</Project>

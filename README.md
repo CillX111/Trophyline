@@ -1,7 +1,23 @@
 # Trophyline
 
-A tiny background app that keeps a dated journal of every Steam achievement you
-unlock, and shows it as a searchable page.
+Your Steam achievements, playtime and library in one good-looking window, plus a
+tiny background tracker that keeps a dated journal of every achievement you unlock.
+
+## Download
+
+Get **`Trophyline.exe`** from the [latest release](https://github.com/CillX1/Trophyline/releases/latest)
+and double-click it. Windows 10/11 (64-bit); no install and no .NET needed.
+
+To start the tracker with Windows and add Trophyline to the Start menu, run it once with:
+
+```
+Trophyline.exe --install
+```
+
+The file isn't code-signed, so Windows SmartScreen may warn the first time:
+click **More info → Run anyway**.
+
+## How it works
 
 - Reads the achievement files Steam already keeps on your PC
   (`Steam\appcache\stats`). No Steam API key, no public profile needed, works offline.
@@ -46,10 +62,22 @@ Files: `%LOCALAPPDATA%\Trophyline\`
 - `journal.tsv`: the data (tab-separated, easy to import elsewhere)
 - `config.json`: `language` (e.g. `"german"`) and an optional `statsFolder`
 
-The page loads achievement icons from Steam's image server when you open it.
-
 ## Build
+
+Needs the .NET 10 SDK.
 
 ```
 dotnet publish -c Release -r win-x64 -o publish
 ```
+
+Standalone exe like the release (no .NET needed to run it):
+
+```
+dotnet publish -c Release -r win-x64 -o dist -p:SelfContained=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true
+```
+
+Releases are built by GitHub Actions when a `v*` tag is pushed.
+
+## License
+
+GPL-3.0. Not affiliated with Valve or Steam.

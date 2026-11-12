@@ -11,8 +11,8 @@ static class Online
 {
     /// The public Trophyline project. The key is Supabase's "publishable" key, which is made to ship
     /// inside apps: on its own it can only call the tl_* functions, not touch the tables.
-    public const string DefaultServer = "";
-    public const string DefaultKey = "";
+    public const string DefaultServer = "https://cucjgtxcwjddlgisjmew.supabase.co";
+    public const string DefaultKey = "sb_publishable_HfRFJj2P1YzL9GL8-DhlRQ_CuEVGbWM";
 
     /// TROPHYLINE_SERVER / TROPHYLINE_KEY override these (for testing), then config.json, then the defaults.
     public static string Server =>

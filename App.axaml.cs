@@ -27,6 +27,7 @@ public partial class App : Application
             {
                 var items = Popup.Read(Args[1]);
                 if (items.Count == 0) { desktop.Shutdown(); base.OnFrameworkInitializationCompleted(); return; }
+                if (items.All(i => i.AppId != Popup.LevelUpId) && Popup.LevelUp() is PopupItem up) items.Insert(0, up);
                 desktop.MainWindow = new PopupWindow(items);
                 base.OnFrameworkInitializationCompleted();
                 return;

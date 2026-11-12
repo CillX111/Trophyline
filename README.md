@@ -44,6 +44,12 @@ The files aren't signed by Microsoft or Apple, so the first launch shows a warni
 - **Achievement pop-ups**: a card slides in at the bottom-right corner the moment you
   unlock something, with the icon and how rare it is (gold for under 10%). It never
   takes focus from your game; click it to open Trophyline. Turn it off in Settings
+- **Levels & XP**: everything earns XP: achievements (15–150 XP, rarer = more), your
+  first achievement in a game (50), 100% completion (500), every hour played (10) and
+  every tracked session of 15+ minutes (20). Your level and XP bar sit in the sidebar;
+  the Level page shows ranks (Rookie → Explorer → Hunter → Veteran → Elite → Master →
+  Legend), where your XP comes from and recent gains. Pop-ups show the XP you earned
+  and a "Level up!" card when you reach a new level
 - **Storage**: installed games by size, flags games not played in 6+ months
 - **Music**: save your Spotify playlists, albums or artists (paste a share link) and play
   them with one click; a mini-player in the sidebar shows the current song with

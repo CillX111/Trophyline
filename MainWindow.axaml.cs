@@ -63,6 +63,7 @@ public partial class MainWindow : Window
         NavGames.IsCheckedChanged += (_, _) => { if (NavGames.IsChecked == true && !syncingNav) ShowPage(GamesPage); };
         NavStorage.IsCheckedChanged += (_, _) => { if (NavStorage.IsChecked == true && !syncingNav) ShowPage(StoragePage); };
         NavMusic.IsCheckedChanged += (_, _) => { if (NavMusic.IsChecked == true && !syncingNav) ShowPage(MusicPage); };
+        NavLevel.IsCheckedChanged += (_, _) => { if (NavLevel.IsChecked == true && !syncingNav) { ShowPage(LevelPage); AnimateLevelBar(); } };
         NavPlaytime.IsCheckedChanged += (_, _) => { if (NavPlaytime.IsChecked == true && !syncingNav) { BuildPlaytime(); ShowPage(PlaytimePage); } };
         nowTimer.Tick += (_, _) => { if (PlaytimePage.IsVisible) UpdateNowPlaying(); };
         PopupsSwitch.IsCheckedChanged += (_, _) =>
@@ -193,6 +194,7 @@ public partial class MainWindow : Window
         BuildGames();
         BuildStorage();
         BuildPlaytime();
+        BuildLevel(d);
         if (currentGame != null && games.FirstOrDefault(g => g.G.AppId == currentGame.G.AppId) is GameVM again)
             FillGamePage(again, animate: false);
     }
@@ -900,9 +902,115 @@ public partial class MainWindow : Window
         if ((sender as Control)?.DataContext is SessionVM { Game: GameVM g }) OpenGame(g);
     }
 
+    // =============== level & XP ===============
+
+    Xp.Result? xp;
+
+    void OpenLevel_Click(object? sender, RoutedEventArgs e) => NavLevel.IsChecked = true;
+
+    void BuildLevel(SteamData d)
+    {
+        var r = xp = Xp.Compute(d.Games, sessions);
+        var (title, color) = Xp.RankFor(r.Level);
+        var rankBrush = Fmt.Brush(color);
+        double frac = (double)r.Into / r.Need;
+
+        // sidebar
+        LevelBadgeText.Text = r.Level.ToString();
+        LevelBadge.Background = rankBrush;
+        SideLevel.Text = $"Level {r.Level}  ·  {title}";
+        SideXp.Text = $"{r.Into:N0} / {r.Need:N0} XP";
+        SideXpBar.Value = frac;
+
+        // Level page
+        BigLevel.Text = r.Level.ToString();
+        BigRing.Stroke = rankBrush;
+        RankTitle.Text = title;
+        RankTitle.Foreground = rankBrush;
+        TotalXp.Text = $"{r.Total:N0} XP in total";
+        XpToNext.Text = $"{r.Into:N0} / {r.Need:N0} XP  ·  {r.Need - r.Into:N0} to level {r.Level + 1}";
+        NextRankText.Text = Xp.NextRank(r.Level) is (int lv, string next) ? $"Next rank: {next} at level {lv}" : "Highest rank reached!";
+        if (LevelPage.IsVisible) BigXpBar.Value = frac;
+
+        XpTiles.Children.Clear();
+        string[] icons = ["IconStar", "IconGame", "IconStar", "IconClock", "IconChart"];
+        IBrush[] colors = [Palette.Brush, Fmt.Green, Fmt.Gold, Fmt.Purple, Fmt.Orange];
+        string[] units = ["unlocked", "games", "at 100%", "hours", "sessions"];
+        for (int i = 0; i < r.Breakdown.Count; i++)
+        {
+            var (source, count, amount) = r.Breakdown[i];
+            XpTiles.Children.Add(Tile(icons[i], $"{amount:N0}", source, $"{count:N0} {units[i]}", colors[i]));
+        }
+
+        RankRoad.Children.Clear();
+        foreach (var (from, name, hex) in Xp.Ranks)
+        {
+            bool reached = r.Level >= from, current = Xp.RankFor(r.Level).Title == name;
+            var c = Fmt.Brush(hex);
+            var sp = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 };
+            sp.Children.Add(new PathIcon { Data = Icon("IconShield"), Width = 20, Height = 20, Foreground = reached ? c : Res("Line") });
+            var t = new StackPanel();
+            t.Children.Add(new TextBlock { Text = name, FontWeight = FontWeight.SemiBold, Foreground = reached ? Res("Text") : Res("Muted") });
+            t.Children.Add(new TextBlock { Text = $"level {from}+", FontSize = 11, Foreground = Res("Muted") });
+            sp.Children.Add(t);
+            var chip = new Border
+            {
+                Child = sp, Padding = new Thickness(14, 9), Margin = new Thickness(0, 0, 10, 10), CornerRadius = new CornerRadius(12),
+                Background = current ? Fmt.Tint(c, 0x26) : Res("Card"),
+                BorderBrush = current ? c : Res("Line"), BorderThickness = new Thickness(current ? 2 : 1),
+                Opacity = reached ? 1 : 0.6,
+            };
+            RankRoad.Children.Add(chip);
+        }
+
+        RulesList.ItemsSource = Xp.Rules.Select(rule => XpRow(rule.What, null, rule.Worth, false)).ToList();
+        RecentXpList.ItemsSource = r.Recent.Count == 0
+            ? [XpRow("Nothing yet", "Unlock an achievement or play a game", "", false)]
+            : r.Recent.Take(12).Select(g => XpRow(g.Text, $"{g.Game}  ·  {Fmt.Ago(g.Time)}", $"+{g.Amount} XP", true)).ToList();
+
+        CheckLevelUp(r.Level, title);
+    }
+
+    Control XpRow(string text, string? sub, string worth, bool gain)
+    {
+        var left = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+        left.Children.Add(new TextBlock { Text = text, FontSize = 14, TextWrapping = TextWrapping.Wrap });
+        if (sub != null) left.Children.Add(new TextBlock { Text = sub, FontSize = 12, Foreground = Res("Muted"), TextTrimming = TextTrimming.CharacterEllipsis });
+        var right = new TextBlock
+        {
+            Text = worth, FontWeight = FontWeight.SemiBold, FontSize = 13, VerticalAlignment = VerticalAlignment.Center,
+            Foreground = gain ? Palette.Brush : Res("Muted"), Margin = new Thickness(12, 0, 0, 0), TextAlignment = TextAlignment.Right,
+        };
+        var row = new DockPanel { Margin = new Thickness(12, 9) };
+        DockPanel.SetDock(right, Dock.Right);
+        row.Children.Add(right);
+        row.Children.Add(left);
+        return row;
+    }
+
+    void AnimateLevelBar()
+    {
+        if (xp == null) return;
+        BigXpBar.Value = 0;
+        Dispatcher.UIThread.Post(() => BigXpBar.Value = (double)xp.Into / xp.Need, DispatcherPriority.Background);
+    }
+
+    async void CheckLevelUp(int level, string title)
+    {
+        int seen = Xp.LastSeenLevel();
+        if (seen == level) return;
+        Xp.MarkSeen(level);
+        if (seen == 0 || level < seen) return; // first time: no fanfare
+        LevelUpText.Text = $"You reached level {level}  ·  {title}";
+        LevelUpBanner.IsVisible = true;
+        await FadeIn(LevelUpBanner);
+        await Task.Delay(7000);
+        LevelUpBanner.IsVisible = false;
+    }
+
     // =============== navigation ===============
 
-    Control[] AllPages => [OverviewPage, AchievementsPage, GamesPage, GamePage, PlaytimePage, StoragePage, MusicPage, SettingsPage];
+    Control[] AllPages => [OverviewPage, AchievementsPage, GamesPage, GamePage, LevelPage, PlaytimePage, StoragePage, MusicPage, SettingsPage];
 
     Control? VisiblePage() => AllPages.FirstOrDefault(p => p.IsVisible);
 
@@ -911,7 +1019,7 @@ public partial class MainWindow : Window
         if (page != GamePage) currentGame = null;
         foreach (var p in AllPages) p.IsVisible = p == page;
         var nav = page == OverviewPage ? NavOverview : page == AchievementsPage ? NavAchievements
-                : page == StoragePage ? NavStorage : page == PlaytimePage ? NavPlaytime : page == MusicPage ? NavMusic : page == SettingsPage ? NavSettings : NavGames;
+                : page == StoragePage ? NavStorage : page == PlaytimePage ? NavPlaytime : page == LevelPage ? NavLevel : page == MusicPage ? NavMusic : page == SettingsPage ? NavSettings : NavGames;
         if (nav.IsChecked != true)
         {
             syncingNav = true;
@@ -969,6 +1077,7 @@ public partial class MainWindow : Window
             case "games": NavGames.IsChecked = true; if (arg != null) GameSort.SelectedIndex = int.Parse(arg); break;
             case "storage": NavStorage.IsChecked = true; break;
             case "playtime": NavPlaytime.IsChecked = true; break;
+            case "level": NavLevel.IsChecked = true; break;
             case "settings":
                 NavSettings.IsChecked = true;
                 if (arg != null) PickAccent(arg);

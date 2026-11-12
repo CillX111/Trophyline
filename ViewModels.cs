@@ -137,6 +137,8 @@ public sealed class AchVM(AchievementInfo a, GameInfo g) : Notify
         _ => Fmt.Grey,
     };
     public IBrush PillBackground => Fmt.Tint(PillBrush, 0x2A);
+    public string XpText => A.Unlocked ? $"+{Xp.ForAchievement(A.Rarity)} XP" : $"{Xp.ForAchievement(A.Rarity)} XP";
+    public IBrush XpBrush => A.Unlocked ? Palette.Brush : Fmt.Grey;
     public string PillText => A.Rarity is double r
         ? (r < 5 ? "ULTRA RARE  " : r < 15 ? "RARE  " : "") + (r < 10 ? $"{r:0.0}%" : $"{r:0}%")
         : "";

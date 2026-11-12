@@ -109,22 +109,41 @@
                 </StackPanel>
 
                 <!-- profile -->
-                <Border DockPanel.Dock="Bottom" Margin="14" Padding="12" CornerRadius="12" Background="#121A23">
-                    <StackPanel Orientation="Horizontal" Spacing="10">
-                        <Panel Width="40" Height="40">
-                            <Ellipse Fill="{DynamicResource AccentAvatar}"/>
-                            <TextBlock x:Name="AvatarLetter" HorizontalAlignment="Center" VerticalAlignment="Center"
-                                       FontWeight="Bold" FontSize="17" Foreground="White"/>
-                        </Panel>
-                        <StackPanel VerticalAlignment="Center">
-                            <TextBlock x:Name="ProfileName" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" MaxWidth="140"/>
-                            <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,2,0,0">
-                                <Ellipse x:Name="TrackerDot" Width="7" Height="7" Fill="{StaticResource Green}" VerticalAlignment="Center"/>
-                                <TextBlock x:Name="TrackerText" Text="Tracking live" FontSize="12" Classes="muted"/>
+                <Button DockPanel.Dock="Bottom" Classes="plain" Click="OpenLevel_Click" Margin="14" HorizontalAlignment="Stretch"
+                        HorizontalContentAlignment="Stretch" ToolTip.Tip="Your level: click to see how you earn XP">
+                <Border Classes="row" Padding="12" CornerRadius="12" Background="#121A23" BorderThickness="1" BorderBrush="Transparent">
+                    <StackPanel Spacing="10">
+                        <StackPanel Orientation="Horizontal" Spacing="10">
+                            <Panel Width="40" Height="40">
+                                <Ellipse Fill="{DynamicResource AccentAvatar}"/>
+                                <TextBlock x:Name="AvatarLetter" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                           FontWeight="Bold" FontSize="17" Foreground="White"/>
+                                <!-- level badge on the avatar -->
+                                <Border x:Name="LevelBadge" MinWidth="22" Height="20" CornerRadius="10" Padding="5,0"
+                                        HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,-8,-5"
+                                        Background="{StaticResource Gold}" BorderBrush="#121A23" BorderThickness="2">
+                                    <TextBlock x:Name="LevelBadgeText" Text="1" FontSize="10" FontWeight="Bold" Foreground="#0B1016"
+                                               HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                </Border>
+                            </Panel>
+                            <StackPanel VerticalAlignment="Center" Margin="4,0,0,0">
+                                <TextBlock x:Name="ProfileName" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" MaxWidth="136"/>
+                                <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,2,0,0">
+                                    <Ellipse x:Name="TrackerDot" Width="7" Height="7" Fill="{StaticResource Green}" VerticalAlignment="Center"/>
+                                    <TextBlock x:Name="TrackerText" Text="Tracking live" FontSize="12" Classes="muted"/>
+                                </StackPanel>
                             </StackPanel>
+                        </StackPanel>
+                        <StackPanel Spacing="4">
+                            <DockPanel>
+                                <TextBlock x:Name="SideXp" DockPanel.Dock="Right" FontSize="11" Classes="muted"/>
+                                <TextBlock x:Name="SideLevel" FontSize="12" FontWeight="SemiBold"/>
+                            </DockPanel>
+                            <ProgressBar x:Name="SideXpBar" Classes="thin" Background="{StaticResource Line}" Foreground="{DynamicResource Accent}"/>
                         </StackPanel>
                     </StackPanel>
                 </Border>
+                </Button>
 
                 <!-- Spotify mini-player -->
                 <Border DockPanel.Dock="Bottom" Margin="14,0,14,0" Padding="12,12,12,8" CornerRadius="12" Background="#121A23">
@@ -159,6 +178,7 @@
                     <RadioButton x:Name="NavOverview" Classes="nav" GroupName="nav" Tag="{StaticResource IconHome}" Content="Overview" IsChecked="True"/>
                     <RadioButton x:Name="NavAchievements" Classes="nav" GroupName="nav" Tag="{StaticResource IconStar}" Content="Achievements"/>
                     <RadioButton x:Name="NavGames" Classes="nav" GroupName="nav" Tag="{StaticResource IconGame}" Content="Games"/>
+                    <RadioButton x:Name="NavLevel" Classes="nav" GroupName="nav" Tag="{StaticResource IconShield}" Content="Level"/>
                     <RadioButton x:Name="NavPlaytime" Classes="nav" GroupName="nav" Tag="{StaticResource IconClock}" Content="Playtime"/>
                     <RadioButton x:Name="NavStorage" Classes="nav" GroupName="nav" Tag="{StaticResource IconDrive}" Content="Storage"/>
                     <RadioButton x:Name="NavMusic" Classes="nav" GroupName="nav" Tag="{StaticResource IconMusic}" Content="Music"/>
@@ -271,7 +291,10 @@
                         </DataTemplate>
                         <DataTemplate DataType="local:AchVM">
                             <Border Classes="card" CornerRadius="12" Padding="12" Margin="0,0,10,8" Opacity="{Binding RowOpacity}">
-                                <Grid ColumnDefinitions="Auto,*,Auto,Auto">
+                                <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto">
+                                    <TextBlock Grid.Column="4" Text="{Binding XpText}" Foreground="{Binding XpBrush}" FontSize="13" FontWeight="SemiBold"
+                                               VerticalAlignment="Center" MinWidth="70" TextAlignment="Right"
+                                               ToolTip.Tip="XP this achievement is worth (rarer achievements give more)"/>
                                     <Border Width="56" Height="56" CornerRadius="9" Background="{StaticResource Line}"
                                             BorderBrush="{Binding IconBorder}" BorderThickness="2" ClipToBounds="True">
                                         <Image Source="{Binding Icon}" Stretch="UniformToFill"/>
@@ -387,7 +410,10 @@
                         </DataTemplate>
                         <DataTemplate DataType="local:AchVM">
                             <Border Classes="card" CornerRadius="12" Padding="12" Margin="0,0,10,8" Opacity="{Binding RowOpacity}">
-                                <Grid ColumnDefinitions="Auto,*,Auto,Auto">
+                                <Grid ColumnDefinitions="Auto,*,Auto,Auto,Auto">
+                                    <TextBlock Grid.Column="4" Text="{Binding XpText}" Foreground="{Binding XpBrush}" FontSize="13" FontWeight="SemiBold"
+                                               VerticalAlignment="Center" MinWidth="70" TextAlignment="Right"
+                                               ToolTip.Tip="XP this achievement is worth (rarer achievements give more)"/>
                                     <Border Width="56" Height="56" CornerRadius="9" Background="{StaticResource Line}"
                                             BorderBrush="{Binding IconBorder}" BorderThickness="2" ClipToBounds="True">
                                         <Image Source="{Binding Icon}" Stretch="UniformToFill"/>
@@ -523,6 +549,63 @@
                 </ScrollViewer>
             </Grid>
 
+            <!-- Level & XP -->
+            <ScrollViewer x:Name="LevelPage" IsVisible="False">
+                <StackPanel Margin="30,26,30,30">
+                    <TextBlock Text="Level" Classes="pageTitle"/>
+                    <TextBlock Classes="muted" Margin="0,4,0,0" TextWrapping="Wrap"
+                               Text="Everything you do earns XP: unlocking achievements (rare ones give more), finishing games and playing. It counts your whole Steam history."/>
+
+                    <Border Classes="card" Padding="26,22" Margin="0,18,0,0">
+                        <Grid ColumnDefinitions="Auto,*">
+                            <Panel Width="132" Height="132">
+                                <Ellipse x:Name="BigRing" StrokeThickness="6" Stroke="{StaticResource Gold}"/>
+                                <Ellipse Margin="12" Fill="{StaticResource CardHi}"/>
+                                <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+                                    <TextBlock Text="LEVEL" FontSize="11" FontWeight="Bold" Classes="muted" HorizontalAlignment="Center"/>
+                                    <TextBlock x:Name="BigLevel" FontSize="44" FontWeight="Bold" HorizontalAlignment="Center" Margin="0,-4,0,0"/>
+                                </StackPanel>
+                            </Panel>
+                            <StackPanel Grid.Column="1" Margin="28,0,0,0" VerticalAlignment="Center">
+                                <TextBlock x:Name="RankTitle" FontSize="30" FontWeight="Bold"/>
+                                <TextBlock x:Name="TotalXp" Classes="muted" FontSize="14" Margin="0,2,0,14"/>
+                                <ProgressBar x:Name="BigXpBar" Height="12" MinHeight="12" CornerRadius="6" Minimum="0" Maximum="1"
+                                             Background="{StaticResource Line}" Foreground="{DynamicResource AccentGradient}">
+                                    <ProgressBar.Transitions>
+                                        <Transitions><DoubleTransition Property="Value" Duration="0:0:0.8" Easing="CubicEaseOut"/></Transitions>
+                                    </ProgressBar.Transitions>
+                                </ProgressBar>
+                                <DockPanel Margin="0,8,0,0">
+                                    <TextBlock x:Name="NextRankText" DockPanel.Dock="Right" Classes="muted" FontSize="13"/>
+                                    <TextBlock x:Name="XpToNext" FontSize="13" FontWeight="SemiBold"/>
+                                </DockPanel>
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+
+                    <TextBlock Text="Where your XP comes from" Classes="section" Margin="0,24,0,4"/>
+                    <UniformGrid x:Name="XpTiles" Columns="5" Margin="-8,0,-8,0"/>
+
+                    <TextBlock Text="Ranks" Classes="section" Margin="0,22,0,12"/>
+                    <WrapPanel x:Name="RankRoad"/>
+
+                    <Grid ColumnDefinitions="*,24,*" Margin="0,18,0,0">
+                        <StackPanel>
+                            <TextBlock Text="How to earn XP" Classes="section" Margin="0,0,0,12"/>
+                            <Border Classes="card" Padding="6,4">
+                                <ItemsControl x:Name="RulesList"/>
+                            </Border>
+                        </StackPanel>
+                        <StackPanel Grid.Column="2">
+                            <TextBlock Text="Recent XP" Classes="section" Margin="0,0,0,12"/>
+                            <Border Classes="card" Padding="6,4">
+                                <ItemsControl x:Name="RecentXpList"/>
+                            </Border>
+                        </StackPanel>
+                    </Grid>
+                </StackPanel>
+            </ScrollViewer>
+
             <!-- Playtime (sessions recorded by the tracker) -->
             <ScrollViewer x:Name="PlaytimePage" IsVisible="False">
                 <StackPanel Margin="30,26,30,30">
@@ -620,6 +703,19 @@
                     </Border>
                 </StackPanel>
             </ScrollViewer>
+
+            <!-- "Level up!" banner -->
+            <Border x:Name="LevelUpBanner" IsVisible="False" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,22,0,0"
+                    CornerRadius="16" Padding="22,14" Background="#F2151C25" BorderBrush="{StaticResource Gold}" BorderThickness="1"
+                    BoxShadow="0 8 30 0 #90000000">
+                <StackPanel Orientation="Horizontal" Spacing="14">
+                    <PathIcon Data="{StaticResource IconShield}" Width="30" Height="30" Foreground="{StaticResource Gold}"/>
+                    <StackPanel>
+                        <TextBlock Text="LEVEL UP!" FontSize="11" FontWeight="Bold" Foreground="{StaticResource Gold}"/>
+                        <TextBlock x:Name="LevelUpText" FontSize="20" FontWeight="Bold"/>
+                    </StackPanel>
+                </StackPanel>
+            </Border>
 
             <!-- loading / problem overlay -->
             <Border x:Name="Overlay" Background="{StaticResource Bg}" IsVisible="False">

@@ -50,6 +50,24 @@ static class Popup
         catch (Exception ex) { Program.LogError("popup: " + ex.Message); }
     }
 
+    /// If these unlocks took you to a new level, a "level up" card for the top of the pop-up.
+    public static PopupItem? LevelUp()
+    {
+        try
+        {
+            int seen = Xp.LastSeenLevel();
+            if (seen == 0) return null; // the window sets the starting level the first time it opens
+            var data = SteamData.Load(Program.ReadLanguage());
+            var r = Xp.Compute(data.Games, SessionLog.Load());
+            if (r.Level <= seen) return null;
+            Xp.MarkSeen(r.Level);
+            return new PopupItem(LevelUpId, Xp.RankFor(r.Level).Title, $"Level {r.Level}", $"{r.Total:N0} XP in total", "", null);
+        }
+        catch (Exception ex) { Program.LogError("popup level: " + ex.Message); return null; }
+    }
+
+    public const string LevelUpId = "levelup";
+
     public static List<PopupItem> Read(string file)
     {
         try { return JsonSerializer.Deserialize(File.ReadAllText(file), PopupJson.Default.ListPopupItem) ?? []; }
@@ -140,8 +158,38 @@ public sealed class PopupWindow : Window
         Position = new PixelPoint(area.Right - size.Width - 8, area.Bottom - size.Height - 8);
     }
 
+    static Control LevelCard(PopupItem it)
+    {
+        var (_, hex) = Xp.RankFor(int.TryParse(it.Name.Replace("Level ", ""), out var l) ? l : 1);
+        var rank = Fmt.Brush(hex);
+        var text = new StackPanel { Margin = new Thickness(14, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
+        text.Children.Add(new TextBlock { Text = "LEVEL UP!", FontSize = 11, FontWeight = FontWeight.Bold, Foreground = Fmt.Gold });
+        text.Children.Add(new TextBlock { Text = $"{it.Name}  ·  {it.Game}", FontSize = 20, FontWeight = FontWeight.Bold, Foreground = Res("Text") });
+        text.Children.Add(new TextBlock { Text = it.Description, FontSize = 12, Foreground = Res("Muted") });
+        var badge = new Border
+        {
+            Width = 64, Height = 64, CornerRadius = new CornerRadius(32), Background = Fmt.Tint(rank, 0x30),
+            BorderBrush = rank, BorderThickness = new Thickness(3),
+            Child = new PathIcon { Data = Geo("IconShield"), Width = 28, Height = 28, Foreground = rank },
+        };
+        var row = new DockPanel();
+        DockPanel.SetDock(badge, Dock.Left);
+        row.Children.Add(badge);
+        row.Children.Add(text);
+        return new Border
+        {
+            Width = CardWidth, Padding = new Thickness(14), CornerRadius = new CornerRadius(14),
+            Background = new SolidColorBrush(Color.Parse("#F2151C25")),
+            BorderBrush = Fmt.Gold, BorderThickness = new Thickness(2),
+            BoxShadow = new BoxShadows(new BoxShadow { Blur = 26, Color = Color.FromArgb(0x70, 0xF5, 0xC4, 0x51) }),
+            Cursor = new Cursor(StandardCursorType.Hand),
+            Child = row,
+        };
+    }
+
     static Control Card(PopupItem it)
     {
+        if (it.AppId == Popup.LevelUpId) return LevelCard(it);
         bool rare = it.Rarity is < 10;
         var iconImg = new Image { Stretch = Stretch.UniformToFill };
         try { if (it.Icon.Length > 0 && File.Exists(it.Icon)) iconImg.Source = new Bitmap(it.Icon); } catch { }
@@ -164,7 +212,16 @@ public sealed class PopupWindow : Window
         });
 
         var text = new StackPanel { Margin = new Thickness(14, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center, Spacing = 1 };
-        text.Children.Add(head);
+        var xpPill = new Border
+        {
+            CornerRadius = new CornerRadius(8), Padding = new Thickness(7, 1), Background = Fmt.Tint(rare ? Fmt.Gold : Palette.Brush, 0x30),
+            Child = new TextBlock { Text = $"+{Xp.ForAchievement(it.Rarity)} XP", FontSize = 11, FontWeight = FontWeight.Bold, Foreground = rare ? Fmt.Gold : Palette.Brush },
+        };
+        var headRow = new DockPanel();
+        DockPanel.SetDock(xpPill, Dock.Right);
+        headRow.Children.Add(xpPill);
+        headRow.Children.Add(head);
+        text.Children.Add(headRow);
         text.Children.Add(new TextBlock { Text = it.Name, FontSize = 16, FontWeight = FontWeight.Bold, Foreground = Res("Text"), TextTrimming = TextTrimming.CharacterEllipsis, Margin = new Thickness(0, 2, 0, 0) });
         if (it.Description.Length > 0)
             text.Children.Add(new TextBlock { Text = it.Description, FontSize = 12, Foreground = Res("Muted"), TextWrapping = TextWrapping.Wrap, MaxHeight = 34, TextTrimming = TextTrimming.CharacterEllipsis });

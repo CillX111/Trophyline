@@ -1,0 +1,201 @@
+<Styles xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <Style Selector="Border.card">
+        <Setter Property="Background" Value="{StaticResource Card}"/>
+        <Setter Property="BorderBrush" Value="{StaticResource Line}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="CornerRadius" Value="14"/>
+    </Style>
+
+    <Style Selector="TextBlock.pageTitle">
+        <Setter Property="FontSize" Value="30"/>
+        <Setter Property="FontWeight" Value="SemiBold"/>
+    </Style>
+    <Style Selector="TextBlock.section">
+        <Setter Property="FontSize" Value="17"/>
+        <Setter Property="FontWeight" Value="SemiBold"/>
+    </Style>
+    <Style Selector="TextBlock.muted">
+        <Setter Property="Foreground" Value="{StaticResource Muted}"/>
+    </Style>
+    <Style Selector="TextBlock.groupHeader">
+        <Setter Property="FontSize" Value="12"/>
+        <Setter Property="FontWeight" Value="Bold"/>
+        <Setter Property="Foreground" Value="{StaticResource Muted}"/>
+        <Setter Property="Margin" Value="2,16,0,10"/>
+    </Style>
+
+    <!-- sidebar navigation (Tag = icon geometry) -->
+    <Style Selector="RadioButton.nav">
+        <Setter Property="Foreground" Value="{StaticResource Muted}"/>
+        <Setter Property="FontSize" Value="15"/>
+        <Setter Property="Margin" Value="12,2"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="HorizontalAlignment" Value="Stretch"/>
+        <Setter Property="Template">
+            <ControlTemplate>
+                <Border Name="bd" Background="Transparent" CornerRadius="10" Padding="14,11">
+                    <Panel>
+                        <Border Name="bar" Width="3" Height="18" CornerRadius="2" Background="{StaticResource Accent}"
+                                HorizontalAlignment="Left" Margin="-14,0,0,0" IsVisible="False"/>
+                        <StackPanel Orientation="Horizontal" Spacing="14">
+                            <PathIcon Name="ico" Data="{TemplateBinding Tag}" Width="17" Height="17"/>
+                            <ContentPresenter Content="{TemplateBinding Content}" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Panel>
+                </Border>
+            </ControlTemplate>
+        </Setter>
+    </Style>
+    <Style Selector="RadioButton.nav:pointerover">
+        <Setter Property="Foreground" Value="{StaticResource Text}"/>
+    </Style>
+    <Style Selector="RadioButton.nav:pointerover /template/ Border#bd">
+        <Setter Property="Background" Value="#141C26"/>
+    </Style>
+    <Style Selector="RadioButton.nav:checked">
+        <Setter Property="Foreground" Value="{StaticResource Text}"/>
+    </Style>
+    <Style Selector="RadioButton.nav:checked /template/ Border#bd">
+        <Setter Property="Background" Value="#18222E"/>
+    </Style>
+    <Style Selector="RadioButton.nav:checked /template/ Border#bar">
+        <Setter Property="IsVisible" Value="True"/>
+    </Style>
+    <Style Selector="RadioButton.nav:checked /template/ PathIcon#ico">
+        <Setter Property="Foreground" Value="{StaticResource Accent}"/>
+    </Style>
+
+    <!-- filter chips -->
+    <Style Selector="RadioButton.chip">
+        <Setter Property="Foreground" Value="{StaticResource Muted}"/>
+        <Setter Property="Margin" Value="0,0,8,0"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="Template">
+            <ControlTemplate>
+                <Border Name="bd" Background="{StaticResource Card}" BorderBrush="{StaticResource Line}" BorderThickness="1"
+                        CornerRadius="16" Padding="14,6">
+                    <ContentPresenter Content="{TemplateBinding Content}"/>
+                </Border>
+            </ControlTemplate>
+        </Setter>
+    </Style>
+    <Style Selector="RadioButton.chip:pointerover">
+        <Setter Property="Foreground" Value="{StaticResource Text}"/>
+    </Style>
+    <Style Selector="RadioButton.chip:checked">
+        <Setter Property="Foreground" Value="{StaticResource Text}"/>
+    </Style>
+    <Style Selector="RadioButton.chip:checked /template/ Border#bd">
+        <Setter Property="Background" Value="#1A3247"/>
+        <Setter Property="BorderBrush" Value="{StaticResource Accent}"/>
+    </Style>
+
+    <!-- a button that only shows its content -->
+    <Style Selector="Button.plain">
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="Padding" Value="0"/>
+        <Setter Property="Foreground" Value="{StaticResource Text}"/>
+        <Setter Property="Template">
+            <ControlTemplate>
+                <ContentPresenter Name="PART_ContentPresenter" Background="Transparent"
+                                  Content="{TemplateBinding Content}" ContentTemplate="{TemplateBinding ContentTemplate}"/>
+            </ControlTemplate>
+        </Setter>
+    </Style>
+
+    <!-- game cards lift and glow on hover -->
+    <Style Selector="Button.plain Panel.art">
+        <Setter Property="RenderTransform" Value="none"/>
+        <Setter Property="Transitions">
+            <Transitions>
+                <TransformOperationsTransition Property="RenderTransform" Duration="0:0:0.15"/>
+            </Transitions>
+        </Setter>
+    </Style>
+    <Style Selector="Button.plain:pointerover Panel.art">
+        <Setter Property="RenderTransform" Value="translateY(-5px)"/>
+    </Style>
+    <Style Selector="Button.plain:pointerover Border.artFrame">
+        <Setter Property="BoxShadow" Value="0 0 24 0 #7366C0F4"/>
+    </Style>
+    <Style Selector="Button.plain:pointerover Border.row">
+        <Setter Property="BorderBrush" Value="{StaticResource Accent}"/>
+    </Style>
+
+    <Style Selector="Button.pill">
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="Foreground" Value="{StaticResource Text}"/>
+        <Setter Property="Template">
+            <ControlTemplate>
+                <Border Name="bd" Background="#AA0B1016" CornerRadius="18" Padding="14,7" BorderBrush="#33FFFFFF" BorderThickness="1">
+                    <ContentPresenter Content="{TemplateBinding Content}"/>
+                </Border>
+            </ControlTemplate>
+        </Setter>
+    </Style>
+    <Style Selector="Button.pill:pointerover /template/ Border#bd">
+        <Setter Property="BorderBrush" Value="{StaticResource Accent}"/>
+    </Style>
+
+    <!-- inputs -->
+    <Style Selector="TextBox.search">
+        <Setter Property="CornerRadius" Value="10"/>
+        <Setter Property="MinHeight" Value="42"/>
+        <Setter Property="Background" Value="{StaticResource Card}"/>
+        <Setter Property="BorderBrush" Value="{StaticResource Line}"/>
+        <Setter Property="Foreground" Value="{StaticResource Text}"/>
+        <Setter Property="VerticalContentAlignment" Value="Center"/>
+        <Setter Property="Padding" Value="8,8,12,8"/>
+    </Style>
+    <Style Selector="TextBox.search:pointerover /template/ Border#PART_BorderElement">
+        <Setter Property="Background" Value="{StaticResource CardHi}"/>
+        <Setter Property="BorderBrush" Value="{StaticResource Line}"/>
+    </Style>
+    <Style Selector="TextBox.search:focus /template/ Border#PART_BorderElement">
+        <Setter Property="Background" Value="{StaticResource Card}"/>
+        <Setter Property="BorderBrush" Value="{StaticResource Accent}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+    </Style>
+
+    <Style Selector="ComboBox.drop">
+        <Setter Property="CornerRadius" Value="10"/>
+        <Setter Property="MinHeight" Value="42"/>
+        <Setter Property="HorizontalAlignment" Value="Stretch"/>
+        <Setter Property="Background" Value="{StaticResource Card}"/>
+        <Setter Property="BorderBrush" Value="{StaticResource Line}"/>
+        <Setter Property="Padding" Value="12,0,8,0"/>
+        <Setter Property="VerticalContentAlignment" Value="Center"/>
+    </Style>
+    <Style Selector="ComboBox.drop:pointerover /template/ Border#Background">
+        <Setter Property="Background" Value="{StaticResource CardHi}"/>
+        <Setter Property="BorderBrush" Value="{StaticResource Accent}"/>
+    </Style>
+
+    <!-- lists without selection highlight -->
+    <Style Selector="ListBox.flat">
+        <Setter Property="Background" Value="Transparent"/>
+        <Setter Property="Padding" Value="0"/>
+        <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled"/>
+    </Style>
+    <Style Selector="ListBox.flat ListBoxItem">
+        <Setter Property="Padding" Value="0"/>
+        <Setter Property="Template">
+            <ControlTemplate>
+                <ContentPresenter Name="PART_ContentPresenter" Background="Transparent"
+                                  Content="{TemplateBinding Content}" ContentTemplate="{TemplateBinding ContentTemplate}"
+                                  HorizontalContentAlignment="Stretch"/>
+            </ControlTemplate>
+        </Setter>
+    </Style>
+
+    <Style Selector="ProgressBar.thin">
+        <Setter Property="MinHeight" Value="5"/>
+        <Setter Property="Height" Value="5"/>
+        <Setter Property="CornerRadius" Value="3"/>
+        <Setter Property="Minimum" Value="0"/>
+        <Setter Property="Maximum" Value="1"/>
+        <Setter Property="Background" Value="#40FFFFFF"/>
+    </Style>
+</Styles>

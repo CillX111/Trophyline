@@ -1,5 +1,4 @@
 using System.Text.RegularExpressions;
-using Microsoft.Win32;
 
 namespace Trophyline;
 
@@ -8,13 +7,6 @@ public sealed record Unlock(long? Time, string Key, string AppId, string Game, s
 /// Reads unlocked achievements from Steam's local cache files.
 static partial class Steam
 {
-    public static string? FindSteamFolder()
-    {
-        var p = Registry.CurrentUser.OpenSubKey(@"Software\Valve\Steam")?.GetValue("SteamPath") as string;
-        if (p == null) return null;
-        p = Path.GetFullPath(p.Replace('/', '\\'));
-        return Directory.Exists(p) ? p : null;
-    }
 
     /// Returns null when the file can't be read yet (e.g. schema not downloaded) so it is retried later.
     public static List<Unlock>? ReadUnlocks(string statsFile, string language, string? steamFolder)

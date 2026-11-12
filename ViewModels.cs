@@ -1,56 +1,55 @@
-using System.Windows;
-using System.Windows.Media;
-using System.Windows.Media.Imaging;
+using System.ComponentModel;
+using Avalonia.Media;
+using Avalonia.Media.Immutable;
+using Avalonia.Media.Imaging;
+using Avalonia.Threading;
 
 namespace Trophyline;
 
-/// Loads pictures once, small and frozen, so the window stays light.
+/// Loads pictures small and once, so the window stays light. Web pictures are saved to disk the first time.
 static class Img
 {
-    static readonly Dictionary<string, ImageSource?> Cache = new(StringComparer.OrdinalIgnoreCase);
+    static readonly Dictionary<string, Bitmap?> Cache = new(StringComparer.OrdinalIgnoreCase);
+    static readonly HttpClient Http = CreateHttp();
 
-    public static ImageSource? File(string? path, int decodeWidth)
+    static HttpClient CreateHttp()
+    {
+        var h = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
+        h.DefaultRequestHeaders.UserAgent.ParseAdd("Trophyline/1.1");
+        return h;
+    }
+
+    public static Bitmap? File(string? path, int width)
     {
         if (string.IsNullOrEmpty(path)) return null;
-        var key = path + "|" + decodeWidth;
+        var key = path + "|" + width;
         if (Cache.TryGetValue(key, out var hit)) return hit;
-        ImageSource? img = null;
+        Bitmap? bmp = null;
         try
         {
             if (System.IO.File.Exists(path))
             {
-                var bmp = new BitmapImage();
-                bmp.BeginInit();
-                bmp.UriSource = new Uri(path);
-                bmp.DecodePixelWidth = decodeWidth;
-                bmp.CacheOption = BitmapCacheOption.OnLoad;
-                bmp.CreateOptions = BitmapCreateOptions.IgnoreColorProfile;
-                bmp.EndInit();
-                bmp.Freeze();
-                img = bmp;
+                using var s = System.IO.File.OpenRead(path);
+                bmp = Bitmap.DecodeToWidth(s, width, BitmapInterpolationMode.HighQuality);
             }
         }
-        catch (Exception) { img = null; }
-        return Cache[key] = img;
+        catch (Exception) { bmp = null; }
+        return Cache[key] = bmp;
     }
 
-    /// From the web (downloads in the background; shows up when ready).
-    public static ImageSource? Url(string url, int decodeWidth)
+    /// Local copy if there is one, otherwise downloads it once (in the background) and keeps it.
+    public static async Task<Bitmap?> Cached(string url, string localPath, int width)
     {
-        var key = url + "|" + decodeWidth;
-        if (Cache.TryGetValue(key, out var hit)) return hit;
-        ImageSource? img = null;
+        if (File(localPath, width) is Bitmap local) return local;
         try
         {
-            var bmp = new BitmapImage();
-            bmp.BeginInit();
-            bmp.UriSource = new Uri(url);
-            bmp.DecodePixelWidth = decodeWidth;
-            bmp.EndInit();
-            img = bmp;
+            var bytes = await Http.GetByteArrayAsync(url);
+            Directory.CreateDirectory(Path.GetDirectoryName(localPath)!);
+            await System.IO.File.WriteAllBytesAsync(localPath, bytes);
+            Cache.Remove(localPath + "|" + width);
+            return File(localPath, width);
         }
-        catch (Exception) { img = null; }
-        return Cache[key] = img;
+        catch (Exception) { return null; }
     }
 }
 
@@ -61,19 +60,16 @@ static class Fmt
         : minutes < 60 ? $"{minutes} min"
         : $"{minutes / 60.0:#,0.#} h";
 
-    public static string HoursShort(int minutes) =>
-        minutes < 60 ? $"{minutes}m" : $"{minutes / 60.0:#,0.#}h";
-
     public static string Ago(long unix)
     {
         if (unix <= 0) return "never";
-        var when = DateTimeOffset.FromUnixTimeSeconds(unix).LocalDateTime;
+        var when = Local(unix);
         var span = DateTime.Now - when;
         if (span.TotalMinutes < 60) return "just now";
         if (when.Date == DateTime.Today) return "today";
         if (when.Date == DateTime.Today.AddDays(-1)) return "yesterday";
-        if (span.TotalDays < 7) { int d = Math.Max(2, (int)Math.Round(span.TotalDays)); return $"{d} days ago"; }
-        if (span.TotalDays < 30) { int w = (int)(span.TotalDays / 7); return w == 1 ? "a week ago" : $"{w} weeks ago"; }
+        if (span.TotalDays < 7) return $"{Math.Max(2, (int)Math.Round(span.TotalDays))} days ago";
+        if (span.TotalDays < 30) { int w = (int)(span.TotalDays / 7); return w <= 1 ? "a week ago" : $"{w} weeks ago"; }
         if (span.TotalDays < 365) { int m = (int)(span.TotalDays / 30.4); return m <= 1 ? "a month ago" : $"{m} months ago"; }
         int y = (int)(span.TotalDays / 365.25);
         return y <= 1 ? "a year ago" : $"{y} years ago";
@@ -86,47 +82,53 @@ static class Fmt
 
     public static DateTime Local(long unix) => DateTimeOffset.FromUnixTimeSeconds(unix).LocalDateTime;
 
-    public static readonly Brush Gold = Frozen("#F5C451");
-    public static readonly Brush Purple = Frozen("#B98CFF");
-    public static readonly Brush Blue = Frozen("#66C0F4");
-    public static readonly Brush Grey = Frozen("#8B99AB");
-    public static readonly Brush None = Frozen("#00000000");
+    public static readonly IBrush Gold = Brush("#F5C451");
+    public static readonly IBrush Purple = Brush("#B98CFF");
+    public static readonly IBrush Blue = Brush("#66C0F4");
+    public static readonly IBrush Grey = Brush("#8B99AB");
+    public static readonly IBrush Green = Brush("#5BD68A");
+    public static readonly IBrush Orange = Brush("#F59E4B");
+    public static readonly IBrush None = Brush("#00000000");
 
-    public static Brush Frozen(string hex)
-    {
-        var b = new SolidColorBrush((Color)ColorConverter.ConvertFromString(hex));
-        b.Freeze();
-        return b;
-    }
+    public static IBrush Brush(string hex) => new ImmutableSolidColorBrush(Color.Parse(hex));
 
-    public static Brush Tint(Brush b, byte alpha)
+    public static IBrush Tint(IBrush b, byte alpha)
     {
-        var c = ((SolidColorBrush)b).Color;
-        var t = new SolidColorBrush(Color.FromArgb(alpha, c.R, c.G, c.B));
-        t.Freeze();
-        return t;
+        var c = ((ISolidColorBrush)b).Color;
+        return new ImmutableSolidColorBrush(Color.FromArgb(alpha, c.R, c.G, c.B));
     }
 }
 
-public sealed class AchVM
+public abstract class Notify : INotifyPropertyChanged
 {
-    public AchVM(AchievementInfo a, GameInfo g) { A = a; G = g; }
-    public AchievementInfo A { get; }
-    public GameInfo G { get; }
+    public event PropertyChangedEventHandler? PropertyChanged;
+    protected void Raise(string name) => PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(name));
+}
+
+/// A heading inside a list ("November 2026", "Unlocked · 11").
+public sealed class HeaderRow(string title)
+{
+    public string Title { get; } = title.ToUpperInvariant();
+}
+
+public sealed class AchVM(AchievementInfo a, GameInfo g) : Notify
+{
+    public AchievementInfo A { get; } = a;
+    public GameInfo G { get; } = g;
 
     public string Name => A.Name;
     public string Description => A.Hidden && !A.Unlocked && A.Description.Length > 0
         ? "Hidden achievement: keep playing to find out." : A.Description;
-    public Visibility DescriptionVisibility => Description.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+    public bool HasDescription => Description.Length > 0;
     public string Game => G.Name;
-    public Visibility GameVisibility { get; set; } = Visibility.Visible;
+    public bool ShowGame { get; set; } = true;
     public string When => A.Time is long t ? Fmt.Local(t).ToString("dd.MM.yyyy  HH:mm") : A.Unlocked ? "unlocked" : "";
-    public string WhenShort => A.Time is long t ? Fmt.Ago(t) : "";
+    public string GameAndWhen => A.Time is long t ? $"{G.Name}  ·  {Fmt.Ago(t)}" : G.Name;
     public string Group { get; set; } = "";
     public double RowOpacity => A.Unlocked ? 1 : 0.62;
 
     // ----- rarity -----
-    public Brush PillBrush => A.Rarity switch
+    public IBrush PillBrush => A.Rarity switch
     {
         null => Fmt.Grey,
         < 5 => Fmt.Gold,
@@ -134,65 +136,59 @@ public sealed class AchVM
         < 40 => Fmt.Blue,
         _ => Fmt.Grey,
     };
-    public Brush PillBackground => Fmt.Tint(PillBrush, 0x2A);
+    public IBrush PillBackground => Fmt.Tint(PillBrush, 0x2A);
     public string PillText => A.Rarity is double r
         ? (r < 5 ? "ULTRA RARE  " : r < 15 ? "RARE  " : "") + (r < 10 ? $"{r:0.0}%" : $"{r:0}%")
         : "";
-    public Visibility PillVisibility => A.Rarity != null ? Visibility.Visible : Visibility.Collapsed;
+    public bool HasRarity => A.Rarity != null;
     public string? RarityTip => A.Rarity is double r ? $"{r:0.0}% of all players have this" : null;
-    public Brush IconBorder => A.Unlocked && A.Rarity is < 5 ? Fmt.Gold : Fmt.None;
+    public IBrush IconBorder => A.Unlocked && A.Rarity is < 5 ? Fmt.Gold : Fmt.None;
 
-    ImageSource? icon;
-    bool iconLoaded;
-    public ImageSource? Icon
+    // ----- icon (loaded when the row first shows) -----
+    Bitmap? icon;
+    bool iconStarted;
+    public Bitmap? Icon
     {
         get
         {
-            if (iconLoaded) return icon;
-            iconLoaded = true;
-            if (A.Unlocked)
-            {
-                var u = new Unlock(A.Time, "", A.AppId, "", "", "", A.Icon);
-                icon = Img.File(IconCache.LocalPath(u), 112)
-                       ?? (A.Icon.Length > 0 ? Img.Url(IconCache.RemoteUrl(u), 112) : null);
-            }
-            else if (A.IconGray.Length > 0)
-                icon = Img.Url($"https://cdn.akamai.steamstatic.com/steamcommunity/public/images/apps/{A.AppId}/{A.IconGray}", 112);
+            if (!iconStarted) { iconStarted = true; _ = LoadIcon(); }
             return icon;
         }
+    }
+
+    async Task LoadIcon()
+    {
+        var file = A.Unlocked ? A.Icon : A.IconGray;
+        if (file.Length == 0) return;
+        var url = $"https://cdn.akamai.steamstatic.com/steamcommunity/public/images/apps/{A.AppId}/{file}";
+        var local = IconCache.LocalPath(new Unlock(null, "", A.AppId, "", "", "", file));
+        var bmp = await Img.Cached(url, local, 112);
+        if (bmp == null) return;
+        await Dispatcher.UIThread.InvokeAsync(() => { icon = bmp; Raise(nameof(Icon)); });
     }
 
     public string SearchText => searchText ??= $"{G.Name} {A.Name} {A.Description}".ToLowerInvariant();
     string? searchText;
 }
 
-public sealed class GameVM
+public sealed class GameVM(GameInfo g)
 {
-    public GameVM(GameInfo g) { G = g; }
-    public GameInfo G { get; }
+    public GameInfo G { get; } = g;
 
     public string Name => string.IsNullOrEmpty(G.Name) ? $"App {G.AppId}" : G.Name;
     public double Completion => G.Completion;
     public string CountText => $"{G.UnlockedCount} / {G.Total}";
     public string PercentText => $"{G.Completion * 100:0}%";
-    public Visibility AchVisibility => G.Total > 0 ? Visibility.Visible : Visibility.Collapsed;
-    public Visibility PerfectVisibility => G.Perfect ? Visibility.Visible : Visibility.Collapsed;
-    public Brush ProgressBrush => G.Perfect ? Fmt.Gold : Fmt.Blue;
-    public Brush CardBorder => G.Perfect ? Fmt.Gold : Fmt.None;
+    public bool HasAchievements => G.Total > 0;
+    public bool Perfect => G.Perfect;
+    public IBrush ProgressBrush => G.Perfect ? Fmt.Gold : Fmt.Blue;
+    public IBrush CardBorder => G.Perfect ? Fmt.Gold : Fmt.None;
     public string CardSub => G.PlaytimeMinutes > 0
         ? $"{Fmt.Hours(G.PlaytimeMinutes)}  ·  {Fmt.Ago(G.LastPlayed)}"
         : G.Installed ? "installed, not played yet" : Fmt.Ago(G.LastPlayed);
 
-    ImageSource? portrait; bool portraitLoaded;
-    public ImageSource? Portrait
-    {
-        get
-        {
-            if (!portraitLoaded) { portraitLoaded = true; portrait = Img.File(G.Portrait ?? G.Header ?? G.Hero, 260); }
-            return portrait;
-        }
-    }
-    public ImageSource? HeaderImage => Img.File(G.Header ?? G.Hero ?? G.Portrait, 300);
+    public Bitmap? Portrait => Img.File(G.Portrait ?? G.Header ?? G.Hero, 260);
+    public Bitmap? HeaderImage => Img.File(G.Header ?? G.Hero ?? G.Portrait, 300);
 
     // storage page
     public double SizeFraction { get; set; }
@@ -200,7 +196,6 @@ public sealed class GameVM
     public string StorageSub => G.PlaytimeMinutes > 0
         ? $"{Fmt.Hours(G.PlaytimeMinutes)} played  ·  last played {Fmt.Ago(G.LastPlayed)}"
         : G.LastPlayed > 0 ? $"barely played  ·  last opened {Fmt.Ago(G.LastPlayed)}" : "never played";
-    bool Stale => G.LastPlayed == 0 || (DateTime.Now - Fmt.Local(G.LastPlayed)).TotalDays > 180;
-    public Visibility StaleVisibility => Stale ? Visibility.Visible : Visibility.Collapsed;
+    public bool Stale => G.LastPlayed == 0 || (DateTime.Now - Fmt.Local(G.LastPlayed)).TotalDays > 180;
     public string StaleText => G.LastPlayed == 0 ? "NEVER PLAYED" : "NOT PLAYED IN 6+ MONTHS";
 }

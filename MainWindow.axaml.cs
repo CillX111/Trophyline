@@ -1,18 +1,18 @@
-using System.ComponentModel;
-using System.Runtime.InteropServices;
-using System.Windows;
-using System.Windows.Controls;
-using System.Windows.Data;
-using System.Windows.Input;
-using System.Windows.Interop;
-using System.Windows.Media;
-using System.Windows.Media.Animation;
-using System.Windows.Shapes;
-using System.Windows.Threading;
+using Avalonia;
+using Avalonia.Animation;
+using Avalonia.Animation.Easings;
+using Avalonia.Controls;
+using Avalonia.Controls.Shapes;
+using Avalonia.Input;
+using Avalonia.Interactivity;
+using Avalonia.Layout;
+using Avalonia.Media;
+using Avalonia.Styling;
+using Avalonia.Threading;
 
 namespace Trophyline;
 
-public partial class JournalWindow : Window
+public partial class MainWindow : Window
 {
     const string AllGames = "All games";
     static readonly string[] RarityOptions = ["Any rarity", "Rare (under 15%)", "Ultra rare (under 5%)"];
@@ -30,50 +30,51 @@ public partial class JournalWindow : Window
     SteamData? data;
     List<GameVM> games = [];
     List<AchVM> unlocked = [];
-    ICollectionView? achView;
-    ICollectionView? gameAchView;
+    List<AchVM> gameRows = [];
     GameVM? currentGame;
-    FrameworkElement? pageBeforeGame;
+    Control? pageBeforeGame;
 
     /// Completes once the first load (including online extras) is done. Used by --snapshot.
     public Task Ready => ready.Task;
 
-    public JournalWindow()
+    public MainWindow()
     {
         InitializeComponent();
 
-        // Opens maximized; if you un-maximize, it still fits on the screen.
-        var area = SystemParameters.WorkArea;
-        MinWidth = Math.Min(MinWidth, area.Width);
-        MinHeight = Math.Min(MinHeight, area.Height);
-        Width = Math.Min(1280, area.Width * 0.9);
-        Height = Math.Min(900, area.Height * 0.9);
+        // Opens maximized; if you un-maximize it, it still fits on the screen.
+        if (Screens.Primary is { } screen)
+        {
+            var area = screen.WorkingArea.Size.ToSize(screen.Scaling);
+            MinWidth = Math.Min(MinWidth, area.Width);
+            MinHeight = Math.Min(MinHeight, area.Height);
+            Width = Math.Min(1280, area.Width * 0.9);
+            Height = Math.Min(900, area.Height * 0.9);
+        }
 
-        NavOverview.Checked += (_, _) => { if (!syncingNav) ShowPage(OverviewPage); };
-        NavAchievements.Checked += (_, _) => { if (!syncingNav) ShowPage(AchievementsPage); };
-        NavGames.Checked += (_, _) => { if (!syncingNav) ShowPage(GamesPage); };
-        NavStorage.Checked += (_, _) => { if (!syncingNav) ShowPage(StoragePage); };
+        NavOverview.IsCheckedChanged += (_, _) => { if (NavOverview.IsChecked == true && !syncingNav) ShowPage(OverviewPage); };
+        NavAchievements.IsCheckedChanged += (_, _) => { if (NavAchievements.IsChecked == true && !syncingNav) ShowPage(AchievementsPage); };
+        NavGames.IsCheckedChanged += (_, _) => { if (NavGames.IsChecked == true && !syncingNav) ShowPage(GamesPage); };
+        NavStorage.IsCheckedChanged += (_, _) => { if (NavStorage.IsChecked == true && !syncingNav) ShowPage(StoragePage); };
 
         AchRarity.ItemsSource = RarityOptions;
         AchRarity.SelectedIndex = 0;
         GameSort.ItemsSource = SortOptions;
         GameSort.SelectedIndex = 0;
 
-        achSearchTimer.Tick += (_, _) => { achSearchTimer.Stop(); RefreshAchView(); };
+        achSearchTimer.Tick += (_, _) => { achSearchTimer.Stop(); FillAchList(); };
         gameSearchTimer.Tick += (_, _) => { gameSearchTimer.Stop(); FillGamesGrid(); };
         AchSearch.TextChanged += (_, _) => { achSearchTimer.Stop(); achSearchTimer.Start(); };
         GameSearch.TextChanged += (_, _) => { gameSearchTimer.Stop(); gameSearchTimer.Start(); };
-        AchGame.SelectionChanged += (_, _) => RefreshAchView();
-        AchRarity.SelectionChanged += (_, _) => RefreshAchView();
+        AchGame.SelectionChanged += (_, _) => FillAchList();
+        AchRarity.SelectionChanged += (_, _) => FillAchList();
         GameSort.SelectionChanged += (_, _) => FillGamesGrid();
-        ChipAll.Checked += (_, _) => gameAchView?.Refresh();
-        ChipUnlocked.Checked += (_, _) => gameAchView?.Refresh();
-        ChipLocked.Checked += (_, _) => gameAchView?.Refresh();
+        ChipAll.IsCheckedChanged += (_, _) => { if (ChipAll.IsChecked == true) FillGameAchList(); };
+        ChipUnlocked.IsCheckedChanged += (_, _) => { if (ChipUnlocked.IsChecked == true) FillGameAchList(); };
+        ChipLocked.IsCheckedChanged += (_, _) => { if (ChipLocked.IsChecked == true) FillGameAchList(); };
 
         reloadTimer.Tick += async (_, _) => { reloadTimer.Stop(); await LoadAsync(online: false); };
-        PreviewKeyDown += OnKey;
-        SourceInitialized += (_, _) => DarkTitleBar();
-        Loaded += async (_, _) => { WatchJournal(); await LoadAsync(online: true); ready.TrySetResult(); };
+        AddHandler(KeyDownEvent, OnKey, RoutingStrategies.Tunnel);
+        Opened += async (_, _) => { WatchJournal(); await LoadAsync(online: true); ready.TrySetResult(); };
         Activated += async (_, _) =>
         {
             if (!loading && lastLoad != default && DateTime.Now - lastLoad > TimeSpan.FromMinutes(2))
@@ -81,6 +82,12 @@ public partial class JournalWindow : Window
         };
         Closed += (_, _) => watcher?.Dispose();
     }
+
+    static IBrush Res(string key) =>
+        Application.Current!.TryGetResource(key, ThemeVariant.Dark, out var v) && v is IBrush b ? b : Brushes.Gray;
+
+    static Geometry Icon(string key) =>
+        Application.Current!.TryGetResource(key, ThemeVariant.Dark, out var v) && v is Geometry g ? g : new StreamGeometry();
 
     // =============== loading ===============
 
@@ -97,20 +104,21 @@ public partial class JournalWindow : Window
             catch (Exception ex)
             {
                 Program.LogError("window load: " + ex);
-                ShowOverlay("Couldn't read your Steam files.\n\n" + ex.Message);
+                ShowOverlay("Couldn't read your Steam files.\n\n" + ex.Message +
+                            "\n\nIf Steam is installed somewhere unusual, set \"steamFolder\" in\n" + System.IO.Path.Combine(Program.Home, "config.json"));
                 return;
             }
             Apply(d);
-            Overlay.Visibility = Visibility.Collapsed;
+            Overlay.IsVisible = false;
             lastLoad = DateTime.Now;
-            Program.LogWindow($"loaded games={d.Games.Count} unlocked={unlocked.Count} persona={(d.PersonaName != null)} home={Program.Home}");
+            Program.LogWindow($"loaded games={d.Games.Count} unlocked={unlocked.Count} persona={d.PersonaName != null} home={Program.Home}");
 
             if (online)
             {
                 try
                 {
                     using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
-                    http.DefaultRequestHeaders.UserAgent.ParseAdd("Trophyline/1.0");
+                    http.DefaultRequestHeaders.UserAgent.ParseAdd("Trophyline/1.1");
                     bool names = await NameCache.FetchMissing(d.Games, http);
                     bool rarity = await Rarity.Refresh(d.Games, http);
                     if (names || rarity) Apply(d);
@@ -136,7 +144,7 @@ public partial class JournalWindow : Window
         BuildGames();
         BuildStorage();
         if (currentGame != null && games.FirstOrDefault(g => g.G.AppId == currentGame.G.AppId) is GameVM again)
-            FillGamePage(again);
+            FillGamePage(again, animate: false);
     }
 
     void WatchJournal()
@@ -148,7 +156,7 @@ public partial class JournalWindow : Window
             {
                 NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size | NotifyFilters.FileName,
             };
-            FileSystemEventHandler h = (_, _) => Dispatcher.BeginInvoke(() => { reloadTimer.Stop(); reloadTimer.Start(); });
+            FileSystemEventHandler h = (_, _) => Dispatcher.UIThread.Post(() => { reloadTimer.Stop(); reloadTimer.Start(); });
             watcher.Changed += h;
             watcher.Created += h;
             watcher.EnableRaisingEvents = true;
@@ -159,7 +167,7 @@ public partial class JournalWindow : Window
     void ShowOverlay(string text)
     {
         OverlayText.Text = text;
-        Overlay.Visibility = Visibility.Visible;
+        Overlay.IsVisible = true;
     }
 
     // =============== sidebar ===============
@@ -170,11 +178,11 @@ public partial class JournalWindow : Window
         ProfileName.Text = name;
         AvatarLetter.Text = name.Length > 0 ? char.ToUpper(name[0]).ToString() : "?";
         bool tracking = Program.TrackerRunning();
-        TrackerDot.Fill = tracking ? (Brush)FindResource("Green") : Fmt.Frozen("#F59E4B");
+        TrackerDot.Fill = tracking ? Fmt.Green : Fmt.Orange;
         TrackerText.Text = tracking ? "Tracking live" : "Tracker off";
-        TrackerText.ToolTip = tracking
+        ToolTip.SetTip(TrackerText, tracking
             ? "The background tracker is recording new achievements."
-            : "The background tracker isn't running, so new achievements won't be recorded with their time.";
+            : "The background tracker isn't running. Run Trophyline --install to start it with your computer.");
     }
 
     // =============== overview ===============
@@ -185,14 +193,13 @@ public partial class JournalWindow : Window
 
         var recent = games.Where(g => g.G.LastPlayed > 0).OrderByDescending(g => g.G.LastPlayed).ToList();
         var heroGame = recent.FirstOrDefault(g => g.G.Hero != null) ?? recent.FirstOrDefault();
-        HeroImage.ImageSource = Img.File(heroGame?.G.Hero ?? heroGame?.G.Header, 1600);
+        HeroImage.Source = Img.File(heroGame?.G.Hero ?? heroGame?.G.Header, 1600);
         HeroLogo.Source = Img.File(heroGame?.G.Logo, 700);
         var two = games.Sum(g => g.G.Playtime2WeeksMinutes);
         HeroSub.Text = recent.FirstOrDefault() is GameVM last
             ? $"Last played {last.Name}  ·  {Fmt.Ago(last.G.LastPlayed)}" + (two > 0 ? $"  ·  {Fmt.Hours(two)} in the last 2 weeks" : "")
             : "Play a game on Steam and it shows up here.";
 
-        // tiles
         Tiles.Children.Clear();
         var withAch = games.Where(g => g.G.Total > 0).ToList();
         var started = withAch.Where(g => g.G.UnlockedCount > 0).ToList();
@@ -202,17 +209,15 @@ public partial class JournalWindow : Window
         double avg = started.Count == 0 ? 0 : started.Average(g => g.G.Completion) * 100;
         int minutes = games.Sum(g => g.G.PlaytimeMinutes);
         var rarest = unlocked.Where(a => a.A.Rarity != null).OrderBy(a => a.A.Rarity).FirstOrDefault();
-        var gold = (Brush)FindResource("Gold");
-        var accent = (Brush)FindResource("Accent");
 
-        Tiles.Children.Add(Tile("", unlocked.Count.ToString("N0"), "achievements unlocked", $"out of {totalAch:N0} in your games", accent));
-        Tiles.Children.Add(Tile("", perfect.ToString(), perfect == 1 ? "perfect game" : "perfect games", $"{half} games at 50% or more", gold));
-        Tiles.Children.Add(Tile("", $"{avg:0}%", "average completion", $"across {started.Count} games you've started", Fmt.Purple));
-        Tiles.Children.Add(Tile("", $"{minutes / 60.0:N0} h", "total playtime", two > 0 ? $"{Fmt.Hours(two)} in the last 2 weeks" : "nothing in the last 2 weeks", (Brush)FindResource("Green")));
-        Tiles.Children.Add(Tile("", games.Count.ToString(), "games", $"{games.Count(g => g.G.Installed)} installed", accent));
+        Tiles.Children.Add(Tile("IconStar", unlocked.Count.ToString("N0"), "achievements unlocked", $"out of {totalAch:N0} in your games", Fmt.Blue));
+        Tiles.Children.Add(Tile("IconStar", perfect.ToString(), perfect == 1 ? "perfect game" : "perfect games", $"{half} games at 50% or more", Fmt.Gold));
+        Tiles.Children.Add(Tile("IconChart", $"{avg:0}%", "average completion", $"across {started.Count} games you've started", Fmt.Purple));
+        Tiles.Children.Add(Tile("IconClock", $"{minutes / 60.0:N0} h", "total playtime", two > 0 ? $"{Fmt.Hours(two)} in the last 2 weeks" : "nothing in the last 2 weeks", Fmt.Green));
+        Tiles.Children.Add(Tile("IconGame", games.Count.ToString(), "games", $"{games.Count(g => g.G.Installed)} installed", Fmt.Blue));
         Tiles.Children.Add(rarest != null
-            ? Tile("", rarest.A.Rarity < 10 ? $"{rarest.A.Rarity:0.0}%" : $"{rarest.A.Rarity:0}%", "rarest unlock", $"{rarest.Name} · {rarest.Game}", gold)
-            : Tile("", "–", "rarest unlock", "loading global stats…", gold));
+            ? Tile("IconBolt", rarest.A.Rarity < 10 ? $"{rarest.A.Rarity:0.0}%" : $"{rarest.A.Rarity:0}%", "rarest unlock", $"{rarest.Name} · {rarest.Game}", Fmt.Gold)
+            : Tile("IconBolt", "–", "rarest unlock", "loading global stats…", Fmt.Gold));
 
         BuildHeatmap();
 
@@ -221,39 +226,31 @@ public partial class JournalWindow : Window
         MostPlayed.ItemsSource = games.Where(g => g.G.PlaytimeMinutes > 0).OrderByDescending(g => g.G.PlaytimeMinutes).Take(10).ToList();
     }
 
-    Border Tile(string glyph, string value, string label, string sub, Brush color)
+    static Border Tile(string icon, string value, string label, string sub, IBrush color)
     {
-        var icon = new Border
+        var badge = new Border
         {
             Width = 44, Height = 44, CornerRadius = new CornerRadius(12),
             Background = Fmt.Tint(color, 0x26),
-            Child = new TextBlock
-            {
-                Text = glyph, FontFamily = (FontFamily)FindResource("Icons"), FontSize = 19, Foreground = color,
-                HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center,
-            },
+            VerticalAlignment = VerticalAlignment.Top,
+            Margin = new Thickness(0, 4, 0, 0),
+            Child = new PathIcon { Data = Icon(icon), Width = 19, Height = 19, Foreground = color },
         };
         var text = new StackPanel { Margin = new Thickness(14, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
-        text.Children.Add(new TextBlock { Text = value, FontSize = 26, FontWeight = FontWeights.Bold });
-        text.Children.Add(new TextBlock { Text = label, Foreground = (Brush)FindResource("Text"), FontSize = 13 });
+        text.Children.Add(new TextBlock { Text = value, FontSize = 26, FontWeight = FontWeight.Bold });
+        text.Children.Add(new TextBlock { Text = label, FontSize = 13 });
         text.Children.Add(new TextBlock
         {
-            Text = sub, Foreground = (Brush)FindResource("Muted"), FontSize = 12, Margin = new Thickness(0, 2, 0, 0),
+            Text = sub, Foreground = Res("Muted"), FontSize = 12, Margin = new Thickness(0, 2, 0, 0),
             TextTrimming = TextTrimming.CharacterEllipsis,
         });
         var row = new DockPanel();
-        DockPanel.SetDock(icon, Dock.Left);
-        icon.VerticalAlignment = VerticalAlignment.Top;
-        icon.Margin = new Thickness(0, 4, 0, 0);
-        row.Children.Add(icon);
+        DockPanel.SetDock(badge, Dock.Left);
+        row.Children.Add(badge);
         row.Children.Add(text);
-        return new Border
-        {
-            Style = (Style)FindResource("CardStyle"),
-            Margin = new Thickness(8),
-            Padding = new Thickness(18, 16, 18, 16),
-            Child = row,
-        };
+        var tile = new Border { Margin = new Thickness(8), Padding = new Thickness(18, 16, 18, 16), Child = row };
+        tile.Classes.Add("card");
+        return tile;
     }
 
     void BuildHeatmap()
@@ -268,8 +265,8 @@ public partial class JournalWindow : Window
         const double cell = 14, step = 18, left = 34, top = 22;
         var today = DateTime.Today;
         var start = today.AddDays(-(((int)today.DayOfWeek + 6) % 7)).AddDays(-7 * (weeks - 1)); // a Monday
-        Brush[] levels = [(Brush)FindResource("Line"), Fmt.Frozen("#1D4466"), Fmt.Frozen("#2B6A9C"), Fmt.Frozen("#3F94CF"), Fmt.Frozen("#7FD0FF")];
-        var muted = (Brush)FindResource("Muted");
+        IBrush[] levels = [Res("Line"), Fmt.Brush("#1D4466"), Fmt.Brush("#2B6A9C"), Fmt.Brush("#3F94CF"), Fmt.Brush("#7FD0FF")];
+        var muted = Res("Muted");
 
         int lastMonth = -1;
         for (int w = 0; w < weeks; w++)
@@ -280,11 +277,8 @@ public partial class JournalWindow : Window
                 if (date > today) break;
                 counts.TryGetValue(date, out var n);
                 int lvl = n == 0 ? 0 : n == 1 ? 1 : n <= 3 ? 2 : n <= 6 ? 3 : 4;
-                var r = new Rectangle
-                {
-                    Width = cell, Height = cell, RadiusX = 3, RadiusY = 3, Fill = levels[lvl],
-                    ToolTip = $"{date:ddd dd.MM.yyyy}:  {(n == 0 ? "no" : n.ToString())} achievement{(n == 1 ? "" : "s")}",
-                };
+                var r = new Rectangle { Width = cell, Height = cell, RadiusX = 3, RadiusY = 3, Fill = levels[lvl] };
+                ToolTip.SetTip(r, $"{date:ddd dd.MM.yyyy}:  {(n == 0 ? "no" : n.ToString())} achievement{(n == 1 ? "" : "s")}");
                 Canvas.SetLeft(r, left + w * step);
                 Canvas.SetTop(r, top + d * step);
                 Heatmap.Children.Add(r);
@@ -305,7 +299,7 @@ public partial class JournalWindow : Window
         {
             var t = new TextBlock { Text = label, FontSize = 11, Foreground = muted };
             Canvas.SetLeft(t, 0);
-            Canvas.SetTop(t, top + d * step);
+            Canvas.SetTop(t, top + d * step - 1);
             Heatmap.Children.Add(t);
         }
         Heatmap.Width = left + weeks * step;
@@ -316,7 +310,6 @@ public partial class JournalWindow : Window
             HeatLegend.Children.Add(new Rectangle { Width = 11, Height = 11, RadiusX = 2, RadiusY = 2, Fill = b, Margin = new Thickness(2, 0, 2, 0) });
         HeatLegend.Children.Add(new TextBlock { Text = "More", FontSize = 11, Foreground = muted, Margin = new Thickness(6, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center });
 
-        // summary: last 12 months
         var yearAgo = today.AddDays(-365);
         var inYear = counts.Where(kv => kv.Key > yearAgo).ToList();
         int total = inYear.Sum(kv => kv.Value);
@@ -341,40 +334,29 @@ public partial class JournalWindow : Window
         var names = unlocked.Select(a => a.Game).Distinct().OrderBy(n => n, StringComparer.CurrentCultureIgnoreCase).ToList();
         AchGame.ItemsSource = new[] { AllGames }.Concat(names).ToList();
         AchGame.SelectedItem = keep != null && names.Contains(keep) ? keep : AllGames;
-
-        foreach (var a in unlocked) a.GameVisibility = Visibility.Visible;
-        achView = new ListCollectionView(unlocked);
-        achView.GroupDescriptions.Add(new PropertyGroupDescription(nameof(AchVM.Group)));
-        achView.Filter = o => MatchAch((AchVM)o);
-        AchList.GroupStyle.Clear();
-        AchList.GroupStyle.Add((GroupStyle)FindResource("MonthGroups"));
-        AchList.ItemsSource = achView;
         AchSub.Text = $"{unlocked.Count:N0} unlocked across {names.Count} games";
-        UpdateAchEmpty();
+        FillAchList();
     }
 
-    bool MatchAch(AchVM a)
+    void FillAchList()
     {
-        if (AchGame.SelectedItem is string g && g != AllGames && a.Game != g) return false;
-        switch (AchRarity.SelectedIndex)
+        var q = (AchSearch.Text ?? "").Trim().ToLowerInvariant();
+        var words = q.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        var game = AchGame.SelectedItem as string;
+        int rarity = AchRarity.SelectedIndex;
+        var rows = new List<object>();
+        string? group = null;
+        foreach (var a in unlocked)
         {
-            case 1 when a.A.Rarity is not < 15: return false;
-            case 2 when a.A.Rarity is not < 5: return false;
+            if (game != null && game != AllGames && a.Game != game) continue;
+            if (rarity == 1 && a.A.Rarity is not < 15) continue;
+            if (rarity == 2 && a.A.Rarity is not < 5) continue;
+            if (words.Length > 0 && !words.All(a.SearchText.Contains)) continue;
+            if (a.Group != group) { group = a.Group; rows.Add(new HeaderRow(group)); }
+            rows.Add(a);
         }
-        var q = AchSearch.Text.Trim().ToLowerInvariant();
-        return q.Length == 0 || q.Split(' ', StringSplitOptions.RemoveEmptyEntries).All(a.SearchText.Contains);
-    }
-
-    void RefreshAchView()
-    {
-        achView?.Refresh();
-        UpdateAchEmpty();
-    }
-
-    void UpdateAchEmpty()
-    {
-        bool none = achView == null || achView.IsEmpty;
-        AchEmpty.Visibility = none ? Visibility.Visible : Visibility.Collapsed;
+        AchList.ItemsSource = rows;
+        AchEmpty.IsVisible = rows.Count == 0;
         AchEmpty.Text = unlocked.Count == 0
             ? "No unlocked achievements found yet.\nThey show up here as soon as you unlock one in a Steam game."
             : "Nothing matches your search.";
@@ -391,7 +373,7 @@ public partial class JournalWindow : Window
 
     void FillGamesGrid()
     {
-        var q = GameSearch.Text.Trim().ToLowerInvariant();
+        var q = (GameSearch.Text ?? "").Trim().ToLowerInvariant();
         IEnumerable<GameVM> list = games.Where(g => q.Length == 0 || g.Name.ToLowerInvariant().Contains(q));
         list = GameSort.SelectedIndex switch
         {
@@ -406,27 +388,27 @@ public partial class JournalWindow : Window
 
     // =============== one game ===============
 
-    void OpenGame_Click(object sender, RoutedEventArgs e)
+    void OpenGame_Click(object? sender, RoutedEventArgs e)
     {
-        if ((sender as FrameworkElement)?.DataContext is GameVM vm) OpenGame(vm);
+        if ((sender as Control)?.DataContext is GameVM vm) OpenGame(vm);
     }
 
     void OpenGame(GameVM vm)
     {
-        pageBeforeGame = VisiblePage() is FrameworkElement p && p != GamePage ? p : pageBeforeGame ?? GamesPage;
+        pageBeforeGame = VisiblePage() is Control p && p != GamePage ? p : pageBeforeGame ?? GamesPage;
         ChipAll.IsChecked = true;
-        FillGamePage(vm);
+        FillGamePage(vm, animate: true);
         ShowPage(GamePage);
     }
 
-    void FillGamePage(GameVM vm)
+    void FillGamePage(GameVM vm, bool animate)
     {
         currentGame = vm;
         var g = vm.G;
-        GameHero.ImageSource = Img.File(g.Hero ?? g.Header ?? g.Portrait, 1800);
+        GameHero.Source = Img.File(g.Hero ?? g.Header ?? g.Portrait, 1800);
         GameLogo.Source = Img.File(g.Logo, 800);
         GameTitle.Text = vm.Name;
-        GameTitle.Visibility = GameLogo.Source == null ? Visibility.Visible : Visibility.Collapsed;
+        GameTitle.IsVisible = GameLogo.Source == null;
 
         GameStats.Children.Clear();
         GameStats.Children.Add(MiniStat("Playtime", g.PlaytimeMinutes > 0 ? Fmt.Hours(g.PlaytimeMinutes) : "–"));
@@ -435,58 +417,61 @@ public partial class JournalWindow : Window
         if (g.Total > 0)
         {
             GameStats.Children.Add(MiniStat("Achievements", $"{g.UnlockedCount} / {g.Total}"));
-            GameStats.Children.Add(MiniStat("Completion", $"{g.Completion * 100:0}%", g.Perfect ? (Brush)FindResource("Gold") : null));
+            GameStats.Children.Add(MiniStat("Completion", $"{g.Completion * 100:0}%", g.Perfect ? Fmt.Gold : null));
             var rare = g.Achievements.Where(a => a.Unlocked && a.Rarity != null).OrderBy(a => a.Rarity).FirstOrDefault();
-            if (rare != null) GameStats.Children.Add(MiniStat("Rarest unlock", $"{rare.Rarity:0.0}%", (Brush)FindResource("Gold")));
+            if (rare != null) GameStats.Children.Add(MiniStat("Rarest unlock", $"{rare.Rarity:0.0}%", Fmt.Gold));
         }
         if (g.Installed) GameStats.Children.Add(MiniStat("On disk", Fmt.Size(g.SizeOnDisk)));
 
         bool hasAch = g.Total > 0;
-        GameBarHost.Visibility = GameChips.Visibility = GameAchList.Visibility = hasAch ? Visibility.Visible : Visibility.Collapsed;
-        GameNoAch.Visibility = hasAch ? Visibility.Collapsed : Visibility.Visible;
-        GameBar.Background = g.Perfect ? (Brush)FindResource("Gold") : (Brush)FindResource("Accent");
-        GameBarScale.BeginAnimation(ScaleTransform.ScaleXProperty,
-            new DoubleAnimation(0, g.Completion, TimeSpan.FromMilliseconds(700)) { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } });
+        GameBar.IsVisible = GameChips.IsVisible = GameAchList.IsVisible = hasAch;
+        GameNoAch.IsVisible = !hasAch;
+        GameBar.Foreground = g.Perfect ? Fmt.Gold : Fmt.Blue;
+        if (animate)
+        {
+            GameBar.Value = 0;
+            Dispatcher.UIThread.Post(() => GameBar.Value = g.Completion, DispatcherPriority.Background);
+        }
+        else GameBar.Value = g.Completion;
 
-        int nUnlocked = g.UnlockedCount, nLocked = g.Total - nUnlocked;
-        var rows = g.Achievements
+        gameRows = g.Achievements
             .OrderByDescending(a => a.Unlocked)
             .ThenByDescending(a => a.Unlocked ? a.Time ?? 0 : 0)
             .ThenByDescending(a => a.Rarity ?? -1)
-            .Select(a => new AchVM(a, g)
-            {
-                GameVisibility = Visibility.Collapsed,
-                Group = a.Unlocked ? $"Unlocked  ·  {nUnlocked}" : $"Still to get  ·  {nLocked}  ·  easiest first",
-            })
+            .Select(a => new AchVM(a, g) { ShowGame = false })
             .ToList();
-        gameAchView = new ListCollectionView(rows);
-        gameAchView.GroupDescriptions.Add(new PropertyGroupDescription(nameof(AchVM.Group)));
-        gameAchView.Filter = o =>
-        {
-            var a = (AchVM)o;
-            return ChipUnlocked.IsChecked == true ? a.A.Unlocked : ChipLocked.IsChecked == true ? !a.A.Unlocked : true;
-        };
-        GameAchList.GroupStyle.Clear();
-        GameAchList.GroupStyle.Add((GroupStyle)FindResource("MonthGroups"));
-        GameAchList.ItemsSource = gameAchView;
+        FillGameAchList();
     }
 
-    Border MiniStat(string label, string value, Brush? color = null)
+    void FillGameAchList()
+    {
+        if (currentGame == null) return;
+        bool showUnlocked = ChipLocked.IsChecked != true, showLocked = ChipUnlocked.IsChecked != true;
+        var rows = new List<object>();
+        var un = gameRows.Where(a => a.A.Unlocked).ToList();
+        var lo = gameRows.Where(a => !a.A.Unlocked).ToList();
+        if (showUnlocked && un.Count > 0) { rows.Add(new HeaderRow($"Unlocked  ·  {un.Count}")); rows.AddRange(un); }
+        if (showLocked && lo.Count > 0) { rows.Add(new HeaderRow($"Still to get  ·  {lo.Count}  ·  easiest first")); rows.AddRange(lo); }
+        GameAchList.ItemsSource = rows;
+    }
+
+    static Border MiniStat(string label, string value, IBrush? color = null)
     {
         var sp = new StackPanel();
-        sp.Children.Add(new TextBlock { Text = label.ToUpperInvariant(), FontSize = 11, FontWeight = FontWeights.SemiBold, Foreground = (Brush)FindResource("Muted") });
-        sp.Children.Add(new TextBlock { Text = value, FontSize = 20, FontWeight = FontWeights.SemiBold, Foreground = color ?? (Brush)FindResource("Text"), Margin = new Thickness(0, 2, 0, 0) });
-        return new Border
+        sp.Children.Add(new TextBlock { Text = label.ToUpperInvariant(), FontSize = 11, FontWeight = FontWeight.SemiBold, Foreground = Res("Muted") });
+        sp.Children.Add(new TextBlock { Text = value, FontSize = 20, FontWeight = FontWeight.SemiBold, Foreground = color ?? Res("Text"), Margin = new Thickness(0, 2, 0, 0) });
+        var b = new Border
         {
-            Style = (Style)FindResource("CardStyle"),
             CornerRadius = new CornerRadius(12),
             Padding = new Thickness(16, 10, 22, 12),
             Margin = new Thickness(0, 0, 10, 10),
             Child = sp,
         };
+        b.Classes.Add("card");
+        return b;
     }
 
-    void Back_Click(object sender, RoutedEventArgs e) => GoBack();
+    void Back_Click(object? sender, RoutedEventArgs e) => GoBack();
 
     void GoBack()
     {
@@ -494,7 +479,7 @@ public partial class JournalWindow : Window
         ShowPage(pageBeforeGame ?? GamesPage);
     }
 
-    void ShowAllGames_Click(object sender, RoutedEventArgs e) => NavGames.IsChecked = true;
+    void ShowAllGames_Click(object? sender, RoutedEventArgs e) => NavGames.IsChecked = true;
 
     // =============== storage ===============
 
@@ -504,7 +489,7 @@ public partial class JournalWindow : Window
         long max = installed.Count > 0 ? installed[0].G.SizeOnDisk : 1;
         foreach (var g in installed) g.SizeFraction = (double)g.G.SizeOnDisk / max;
         long total = installed.Sum(g => g.G.SizeOnDisk);
-        var stale = installed.Where(g => g.StaleVisibility == Visibility.Visible).ToList();
+        var stale = installed.Where(g => g.Stale).ToList();
         StorageSub.Text = $"{installed.Count} installed games use {Fmt.Size(total)}"
             + (stale.Count > 0 ? $"  ·  {stale.Count} not played in 6+ months could free {Fmt.Size(stale.Sum(g => g.G.SizeOnDisk))}" : "");
         StorageList.ItemsSource = installed;
@@ -512,15 +497,14 @@ public partial class JournalWindow : Window
 
     // =============== navigation ===============
 
-    FrameworkElement[] AllPages => [OverviewPage, AchievementsPage, GamesPage, GamePage, StoragePage];
+    Control[] AllPages => [OverviewPage, AchievementsPage, GamesPage, GamePage, StoragePage];
 
-    FrameworkElement? VisiblePage() => AllPages.FirstOrDefault(p => p.Visibility == Visibility.Visible);
+    Control? VisiblePage() => AllPages.FirstOrDefault(p => p.IsVisible);
 
-    void ShowPage(FrameworkElement page)
+    void ShowPage(Control page)
     {
         if (page != GamePage) currentGame = null;
-        foreach (var p in AllPages) p.Visibility = p == page ? Visibility.Visible : Visibility.Collapsed;
-        // keep the sidebar in sync without re-triggering navigation
+        foreach (var p in AllPages) p.IsVisible = p == page;
         var nav = page == OverviewPage ? NavOverview : page == AchievementsPage ? NavAchievements
                 : page == StoragePage ? NavStorage : NavGames;
         if (nav.IsChecked != true)
@@ -529,17 +513,28 @@ public partial class JournalWindow : Window
             nav.IsChecked = true;
             syncingNav = false;
         }
-
-        var move = new TranslateTransform(0, 14);
-        page.RenderTransform = move;
-        var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
-        page.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(220)) { EasingFunction = ease });
-        move.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(14, 0, TimeSpan.FromMilliseconds(260)) { EasingFunction = ease });
+        _ = FadeIn(page);
     }
 
-    void OnKey(object sender, KeyEventArgs e)
+    static Task FadeIn(Control page)
     {
-        if (e.Key == Key.F && Keyboard.Modifiers == ModifierKeys.Control)
+        var anim = new Animation
+        {
+            Duration = TimeSpan.FromMilliseconds(220),
+            Easing = new CubicEaseOut(),
+            Children =
+            {
+                new KeyFrame { Cue = new Cue(0), Setters = { new Setter(OpacityProperty, 0d) } },
+                new KeyFrame { Cue = new Cue(1), Setters = { new Setter(OpacityProperty, 1d) } },
+            },
+        };
+        return anim.RunAsync(page);
+    }
+
+    void OnKey(object? sender, KeyEventArgs e)
+    {
+        bool cmd = e.KeyModifiers.HasFlag(KeyModifiers.Control) || e.KeyModifiers.HasFlag(KeyModifiers.Meta);
+        if (e.Key == Key.F && cmd)
         {
             var box = VisiblePage() == GamesPage ? GameSearch : AchSearch;
             if (box == AchSearch) NavAchievements.IsChecked = true;
@@ -550,9 +545,9 @@ public partial class JournalWindow : Window
         else if (e.Key == Key.Escape)
         {
             if (VisiblePage() == GamePage) { GoBack(); e.Handled = true; }
-            else if (Keyboard.FocusedElement is TextBox tb && tb.Text.Length > 0) { tb.Text = ""; e.Handled = true; }
+            else if (FocusManager?.GetFocusedElement() is TextBox tb && !string.IsNullOrEmpty(tb.Text)) { tb.Text = ""; e.Handled = true; }
         }
-        else if (e.Key == Key.Back && VisiblePage() == GamePage && Keyboard.FocusedElement is not TextBox)
+        else if (e.Key == Key.Back && VisiblePage() == GamePage && FocusManager?.GetFocusedElement() is not TextBox)
         {
             GoBack();
             e.Handled = true;
@@ -565,7 +560,7 @@ public partial class JournalWindow : Window
     {
         switch (page)
         {
-            case "achievements": NavAchievements.IsChecked = true; AchSearch.Text = arg ?? ""; RefreshAchView(); break;
+            case "achievements": NavAchievements.IsChecked = true; AchSearch.Text = arg ?? ""; FillAchList(); break;
             case "games": NavGames.IsChecked = true; if (arg != null) GameSort.SelectedIndex = int.Parse(arg); break;
             case "storage": NavStorage.IsChecked = true; break;
             case "game":
@@ -577,20 +572,7 @@ public partial class JournalWindow : Window
     }
 
     internal string DescribeView() =>
-        $"page={VisiblePage()?.Name} games={games.Count} unlocked={unlocked.Count} achVisible={achView?.Cast<object>().Count()} " +
-        $"gameAch={gameAchView?.Cast<object>().Count()} storage={(StorageList.ItemsSource as System.Collections.IList)?.Count}";
-
-    // =============== chrome ===============
-
-    void DarkTitleBar()
-    {
-        var hwnd = new WindowInteropHelper(this).Handle;
-        int on = 1;
-        DwmSetWindowAttribute(hwnd, 20, ref on, sizeof(int)); // DWMWA_USE_IMMERSIVE_DARK_MODE
-        int caption = 0x0016100B; // COLORREF (0x00BBGGRR) of the window background #0B1016
-        DwmSetWindowAttribute(hwnd, 35, ref caption, sizeof(int)); // DWMWA_CAPTION_COLOR (Windows 11)
-    }
-
-    [DllImport("dwmapi.dll")]
-    static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int value, int size);
+        $"page={VisiblePage()?.Name} games={games.Count} unlocked={unlocked.Count} " +
+        $"achRows={(AchList.ItemsSource as System.Collections.IList)?.Count} gameRows={(GameAchList.ItemsSource as System.Collections.IList)?.Count} " +
+        $"storage={(StorageList.ItemsSource as System.Collections.IList)?.Count} os={Environment.OSVersion.Platform}";
 }

@@ -1,6 +1,7 @@
 name: Release
 
-# Push a tag like v1.0.0 to build the standalone .exe and publish it as a GitHub release.
+# Push a tag like v1.1.0 to build Trophyline for Windows, Linux and macOS
+# and publish everything as one GitHub release.
 on:
   push:
     tags: ['v*']
@@ -9,37 +10,128 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  windows:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '10.0.x'
-
-      - name: Build standalone exe (no .NET install needed)
+        with: { dotnet-version: '10.0.x' }
+      - name: Build Trophyline.exe
         shell: pwsh
         run: |
           $version = '${{ github.ref_name }}'.TrimStart('v')
-          dotnet publish -c Release -r win-x64 -o out `
-            -p:SelfContained=true `
-            -p:IncludeNativeLibrariesForSelfExtract=true `
-            -p:EnableCompressionInSingleFile=true `
-            -p:Version=$version
+          dotnet publish -c Release -r win-x64 -o out -p:SelfContained=true `
+            -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -p:Version=$version
+          New-Item -ItemType Directory dist | Out-Null
+          Copy-Item out/Trophyline.exe dist/Trophyline.exe
+      - uses: actions/upload-artifact@v4
+        with: { name: windows, path: dist/* }
 
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with: { dotnet-version: '10.0.x' }
+      - name: Build Trophyline-linux-x64.tar.gz
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          dotnet publish -c Release -r linux-x64 -o out -p:SelfContained=true \
+            -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -p:Version=$version
+          mkdir -p pkg/Trophyline dist
+          cp out/Trophyline pkg/Trophyline/Trophyline
+          chmod +x pkg/Trophyline/Trophyline
+          printf 'Trophyline %s for Linux (x64)\n\nRun:      ./Trophyline\nInstall:  ./Trophyline --install   (starts the tracker at login and adds Trophyline to your app menu)\nRemove:   ./Trophyline --uninstall\n\nKeep this folder where it is after installing (for example in ~/Applications).\n' "$version" > pkg/Trophyline/README.txt
+          tar -C pkg -czf dist/Trophyline-linux-x64.tar.gz Trophyline
+      - uses: actions/upload-artifact@v4
+        with: { name: linux, path: dist/* }
+
+  macos:
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        include:
+          - rid: osx-arm64
+            label: apple-silicon
+          - rid: osx-x64
+            label: intel
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with: { dotnet-version: '10.0.x' }
+      - name: Build Trophyline.app
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          dotnet publish -c Release -r ${{ matrix.rid }} -o out -p:SelfContained=true \
+            -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -p:Version=$version
+
+          app=Trophyline.app
+          mkdir -p $app/Contents/MacOS $app/Contents/Resources dist
+          cp out/Trophyline $app/Contents/MacOS/Trophyline
+          chmod +x $app/Contents/MacOS/Trophyline
+
+          # app icon from the 256 px logo
+          mkdir icon.iconset
+          for s in 16 32 64 128 256; do
+            sips -z $s $s assets/logo.png --out icon.iconset/icon_${s}x${s}.png > /dev/null
+          done
+          cp icon.iconset/icon_32x32.png icon.iconset/icon_16x16@2x.png
+          cp icon.iconset/icon_64x64.png icon.iconset/icon_32x32@2x.png
+          cp icon.iconset/icon_256x256.png icon.iconset/icon_128x128@2x.png
+          rm icon.iconset/icon_64x64.png
+          iconutil -c icns icon.iconset -o $app/Contents/Resources/Trophyline.icns
+
+          cat > $app/Contents/Info.plist <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>CFBundleName</key><string>Trophyline</string>
+            <key>CFBundleDisplayName</key><string>Trophyline</string>
+            <key>CFBundleIdentifier</key><string>io.github.cillx111.trophyline</string>
+            <key>CFBundleExecutable</key><string>Trophyline</string>
+            <key>CFBundleIconFile</key><string>Trophyline</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>CFBundleShortVersionString</key><string>$version</string>
+            <key>CFBundleVersion</key><string>$version</string>
+            <key>LSMinimumSystemVersion</key><string>12.0</string>
+            <key>LSApplicationCategoryType</key><string>public.app-category.games</string>
+            <key>NSHighResolutionCapable</key><true/>
+          </dict></plist>
+          EOF
+
+          # ad-hoc signature: required for Apple Silicon to run it at all
+          codesign --force --deep --sign - $app
+          ditto -c -k --keepParent $app dist/Trophyline-macos-${{ matrix.label }}.zip
+      - uses: actions/upload-artifact@v4
+        with: { name: macos-${{ matrix.label }}, path: dist/* }
+
+  release:
+    needs: [windows, linux, macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: files, merge-multiple: true }
       - name: Publish release
-        shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $notes = @"
-          **Download ``Trophyline.exe`` below** and double-click it. No install or .NET needed (Windows 10/11, 64-bit).
+          cat > notes.md <<'EOF'
+          ## Downloads
 
-          The window opens and a tiny tracker starts in the background. To start the tracker with Windows and add a Start menu entry, run once:
-          ``````
-          Trophyline.exe --install
-          ``````
-          Windows SmartScreen may warn because the file isn't signed: click **More info → Run anyway**.
-          "@
-          gh release create "${{ github.ref_name }}" out/Trophyline.exe --title "Trophyline ${{ github.ref_name }}" --notes $notes
+          | System | File |
+          |---|---|
+          | **Windows** 10/11 | `Trophyline.exe`: double-click it |
+          | **macOS**, Apple Silicon (M1 and newer) | `Trophyline-macos-apple-silicon.zip` |
+          | **macOS**, Intel | `Trophyline-macos-intel.zip` |
+          | **Linux** (x64) | `Trophyline-linux-x64.tar.gz` |
+
+          No install and no .NET needed. Steam must be installed and signed in.
+
+          **Start with your computer:** run the app once with `--install` (Windows: `Trophyline.exe --install`, Linux: `./Trophyline --install`, macOS: `Trophyline.app/Contents/MacOS/Trophyline --install`). It adds a tiny background tracker and a Start menu / app menu entry.
+
+          The files aren't signed by Microsoft or Apple, so the first launch shows a warning:
+          - **Windows:** click *More info → Run anyway*.
+          - **macOS:** right-click Trophyline.app → *Open* → *Open*. (Or run `xattr -dr com.apple.quarantine Trophyline.app`.)
+          EOF
+          gh release create "$GITHUB_REF_NAME" files/* --repo "$GITHUB_REPOSITORY" \
+            --title "Trophyline $GITHUB_REF_NAME" --notes-file notes.md

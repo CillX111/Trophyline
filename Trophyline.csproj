@@ -1,39 +1,48 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <!-- WinExe = no console window; the app runs invisibly. -->
+    <!-- WinExe = no console window on Windows (ignored on Linux and macOS). -->
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net10.0-windows</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <AssemblyName>Trophyline</AssemblyName>
-    <!-- The window (only loaded when you open the app; the background part never touches it). -->
-    <UseWPF>true</UseWPF>
-    <ApplicationIcon>app.ico</ApplicationIcon>
+    <RootNamespace>Trophyline</RootNamespace>
     <Product>Trophyline</Product>
-    <!-- Exclude the one-off tooling and build output from compilation -->
-    <DefaultItemExcludes>$(DefaultItemExcludes);tools\**;publish\**</DefaultItemExcludes>
-    <Version>1.0.0</Version>
+    <Version>1.1.0</Version>
+    <ApplicationIcon>app.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
+    <AvaloniaUseCompiledBindingsByDefault>false</AvaloniaUseCompiledBindingsByDefault>
+    <!-- Registry/COM calls are guarded by OperatingSystem.IsWindows() checks. -->
+    <NoWarn>$(NoWarn);CA1416</NoWarn>
+    <DefaultItemExcludes>$(DefaultItemExcludes);tools\**;publish\**;dist\**</DefaultItemExcludes>
 
-    <!-- Keep the footprint tiny: workstation GC, no extras.
-         Native AOT (even smaller) needs Visual Studio's C++ workload:
-         dotnet publish -c Release -r win-x64 -p:PublishAot=true -->
+    <!-- Keep the background tracker small: workstation GC, no extras.
+         The window (Avalonia) is only loaded when you open it. -->
     <PublishSingleFile Condition="'$(PublishAot)' != 'true'">true</PublishSingleFile>
     <SelfContained>false</SelfContained>
     <TieredPGO>false</TieredPGO>
     <OptimizationPreference>Size</OptimizationPreference>
-    <!-- No InvariantGlobalization: WPF text boxes need the keyboard's culture. -->
     <ServerGarbageCollector>false</ServerGarbageCollector>
     <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
     <JsonSerializerIsReflectionEnabledByDefault>false</JsonSerializerIsReflectionEnabledByDefault>
     <DebuggerSupport>false</DebuggerSupport>
     <EventSourceSupport>false</EventSourceSupport>
-    <StackTraceSupport>false</StackTraceSupport>
   </PropertyGroup>
 
   <ItemGroup>
-    <Resource Include="assets\logo.png" />
+    <PackageReference Include="Avalonia" Version="11.3.23" />
+    <PackageReference Include="Avalonia.Desktop" Version="11.3.23" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="11.3.23" />
+    <PackageReference Include="Avalonia.Fonts.Inter" Version="11.3.23" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <AvaloniaResource Include="assets\**" />
+    <!-- also embedded plainly, so the install command can write it out as the Linux menu icon -->
+    <EmbeddedResource Include="assets\logo.png" LogicalName="Trophyline.logo.png" />
   </ItemGroup>
 
 </Project>

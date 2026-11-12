@@ -50,7 +50,7 @@ public sealed class SteamData
     public static SteamData Load(string language)
     {
         var data = new SteamData();
-        var steam = Steam.FindSteamFolder() ?? throw new DirectoryNotFoundException("Steam isn't installed.");
+        var steam = Program.SteamFolder() ?? throw new DirectoryNotFoundException("Steam isn't installed (or was never started).");
         var games = new Dictionary<string, GameInfo>();
         GameInfo Get(string id) => games.TryGetValue(id, out var g) ? g : games[id] = new GameInfo { AppId = id };
 

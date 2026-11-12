@@ -2,81 +2,89 @@
 
 Your Steam achievements, playtime and library in one good-looking window, plus a
 tiny background tracker that keeps a dated journal of every achievement you unlock.
+For **Windows, macOS and Linux**.
 
 ## Download
 
-Get **`Trophyline.exe`** from the [latest release](https://github.com/CillX111/Trophyline/releases/latest)
-and double-click it. Windows 10/11 (64-bit); no install and no .NET needed.
+From the [latest release](https://github.com/CillX111/Trophyline/releases/latest):
 
-To start the tracker with Windows and add Trophyline to the Start menu, run it once with:
+| System | File |
+|---|---|
+| Windows 10/11 | `Trophyline.exe`: double-click it |
+| macOS, Apple Silicon (M1 and newer) | `Trophyline-macos-apple-silicon.zip`: unzip, move `Trophyline.app` to Applications |
+| macOS, Intel | `Trophyline-macos-intel.zip` |
+| Linux (x64) | `Trophyline-linux-x64.tar.gz`: unpack, run `./Trophyline` |
+
+No install and no .NET needed. Steam must be installed and signed in on the same computer.
+
+To start the tracker with your computer and add Trophyline to the Start menu / app menu, run it once with `--install`:
 
 ```
-Trophyline.exe --install
+Trophyline.exe --install                               (Windows)
+./Trophyline --install                                 (Linux)
+Trophyline.app/Contents/MacOS/Trophyline --install     (macOS)
 ```
 
-The file isn't code-signed, so Windows SmartScreen may warn the first time:
-click **More info → Run anyway**.
+The files aren't signed by Microsoft or Apple, so the first launch shows a warning.
+**Windows:** click *More info → Run anyway*. **macOS:** right-click `Trophyline.app` → *Open* → *Open*
+(or run `xattr -dr com.apple.quarantine Trophyline.app`).
 
-## How it works
-
-- Reads the achievement files Steam already keeps on your PC
-  (`Steam\appcache\stats`). No Steam API key, no public profile needed, works offline.
-  It only reads those files and never changes them.
-- First run imports your whole history with the original unlock dates.
-- Event-driven: it sleeps until Steam updates a game's stats file. On startup it
-  catches up on anything unlocked while it wasn't running.
-- No window, idle CPU priority, about 7 MB of private memory.
-
-## Use
-
-Open **Trophyline** from the Start menu (right-click it, then
-"Pin to taskbar"). Pages:
+## What you get
 
 - **Overview**: your profile over the game you played last, stat tiles, a
   12-month activity heatmap, recent and rarest unlocks, most played games
-- **Achievements**: every unlock by month, with search (Ctrl+F), game and rarity filters
+- **Achievements**: every unlock by month, with search (Ctrl+F / Cmd+F), game and rarity filters
 - **Games**: cover-art grid with progress bars, sortable; click a game for its page:
   hero art, playtime, completion, and every achievement, including the ones still
   to get (easiest first, by global rarity)
 - **Storage**: installed games by size, flags games not played in 6+ months
 
-Everything comes from Steam's files on this PC. Two things are fetched online and
-cached: global achievement rarity (Steam's public stats, weekly) and names of
-games Steam has no local name for.
+## How it works
 
-Two parts, one exe:
-- the **tracker** (`--background`): tiny, starts at login, does all the work
-- the **window** (no arguments): only uses memory while it's open
+- Reads the files Steam already keeps on your computer: achievements
+  (`appcache/stats`), playtime (`userdata/…/localconfig.vdf`), installed games and the
+  artwork Steam downloaded. No Steam API key or public profile needed.
+  It only reads those files and never changes them.
+- Two things are fetched online and cached: global achievement rarity (Steam's public
+  stats, refreshed weekly) and names of games Steam has no local name for.
+- The **tracker** (`--background`) is event-driven: it sleeps until Steam updates a
+  game's stats file, then records the unlock with its date. About 7 MB of memory,
+  lowest CPU priority. The **window** only uses memory while it's open.
+
+Steam is found automatically (Windows registry; `~/Library/Application Support/Steam`
+on macOS; `~/.steam/steam`, `~/.local/share/Steam`, Flatpak and Snap on Linux).
 
 ```
-Trophyline.exe               open the window
-Trophyline.exe --install     start the tracker now + at every login, add Start menu entry
-Trophyline.exe --uninstall   remove both and stop (journal is kept)
-Trophyline.exe --stop        stop the tracker
-Trophyline.exe --update      scan once and update the journal
+Trophyline               open the window
+Trophyline --install     start the tracker now + at every login, add to Start menu / app menu
+Trophyline --uninstall   undo --install and stop the tracker (journal is kept)
+Trophyline --stop        stop the tracker
+Trophyline --update      scan once and update the journal
 ```
 
-Files: `%LOCALAPPDATA%\Trophyline\`
-- `icons\`: local copies of the achievement icons
+Data folder: `%LOCALAPPDATA%\Trophyline` (Windows), `~/Library/Application Support/Trophyline`
+(macOS), `~/.local/share/Trophyline` (Linux):
+- `journal.tsv`: every recorded unlock (tab-separated, easy to import elsewhere)
 - `journal.html`: the same journal as a web page
-- `journal.tsv`: the data (tab-separated, easy to import elsewhere)
-- `config.json`: `language` (e.g. `"german"`) and an optional `statsFolder`
+- `icons/`, `rarity/`: cached pictures and rarity stats
+- `config.json`: `language` (e.g. `"german"`), and optional `steamFolder` / `statsFolder`
+  if Steam is somewhere unusual
 
 ## Build
 
-Needs the .NET 10 SDK.
+Needs the .NET 10 SDK. The window uses [Avalonia](https://avaloniaui.net/).
 
 ```
-dotnet publish -c Release -r win-x64 -o publish
+dotnet publish -c Release -r win-x64 -o publish        # or linux-x64, osx-arm64, osx-x64
 ```
 
-Standalone exe like the release (no .NET needed to run it):
+Standalone build like the releases (no .NET needed to run it):
 
 ```
 dotnet publish -c Release -r win-x64 -o dist -p:SelfContained=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true
 ```
 
-Releases are built by GitHub Actions when a `v*` tag is pushed.
+Releases for all systems are built by GitHub Actions when a `v*` tag is pushed.
 
 ## License
 

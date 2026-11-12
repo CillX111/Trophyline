@@ -1,0 +1,395 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="using:Trophyline"
+        x:Class="Trophyline.MainWindow"
+        Title="Trophyline" Icon="/assets/logo.png"
+        Width="1280" Height="860" MinWidth="980" MinHeight="600"
+        WindowStartupLocation="CenterScreen" WindowState="Maximized"
+        Background="{StaticResource Bg}" Foreground="{StaticResource Text}" FontSize="14">
+
+    <Window.Resources>
+        <!-- small achievement row (overview lists) -->
+        <DataTemplate x:Key="AchCompact" DataType="local:AchVM">
+            <Grid ColumnDefinitions="Auto,*,Auto" Margin="0,0,0,12">
+                <Border Width="42" Height="42" CornerRadius="7" Background="{StaticResource Line}"
+                        BorderBrush="{Binding IconBorder}" BorderThickness="2" ClipToBounds="True">
+                    <Image Source="{Binding Icon}" Stretch="UniformToFill"/>
+                </Border>
+                <StackPanel Grid.Column="1" Margin="12,0,10,0" VerticalAlignment="Center">
+                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                    <TextBlock Text="{Binding GameAndWhen}" Classes="muted" FontSize="12" TextTrimming="CharacterEllipsis"/>
+                </StackPanel>
+                <Border Grid.Column="2" CornerRadius="10" Padding="8,2" Background="{Binding PillBackground}"
+                        IsVisible="{Binding HasRarity}" VerticalAlignment="Center" ToolTip.Tip="{Binding RarityTip}">
+                    <TextBlock Text="{Binding PillText}" Foreground="{Binding PillBrush}" FontSize="12" FontWeight="SemiBold"/>
+                </Border>
+            </Grid>
+        </DataTemplate>
+
+        <!-- game card -->
+        <DataTemplate x:Key="GameCard" DataType="local:GameVM">
+            <Button Classes="plain" Click="OpenGame_Click" Margin="0,0,16,18" Width="170" ToolTip.Tip="{Binding Name}">
+                <StackPanel>
+                    <Panel Classes="art" Height="255">
+                        <Border Classes="artFrame" CornerRadius="11" Background="{StaticResource CardHi}" ClipToBounds="True">
+                            <Panel>
+                                <TextBlock Text="{Binding Name}" TextWrapping="Wrap" TextAlignment="Center" VerticalAlignment="Center"
+                                           Margin="14" FontWeight="SemiBold" Classes="muted"/>
+                                <Image Source="{Binding Portrait}" Stretch="UniformToFill"/>
+                                <Border VerticalAlignment="Bottom" Height="72" IsVisible="{Binding HasAchievements}">
+                                    <Border.Background>
+                                        <LinearGradientBrush StartPoint="0%,0%" EndPoint="0%,100%">
+                                            <GradientStop Color="#000B1016" Offset="0"/>
+                                            <GradientStop Color="#EE0B1016" Offset="1"/>
+                                        </LinearGradientBrush>
+                                    </Border.Background>
+                                    <StackPanel VerticalAlignment="Bottom" Margin="10,0,10,10" Spacing="5">
+                                        <DockPanel>
+                                            <TextBlock DockPanel.Dock="Right" Text="{Binding PercentText}" FontSize="12" FontWeight="SemiBold"
+                                                       Foreground="{Binding ProgressBrush}"/>
+                                            <TextBlock Text="{Binding CountText}" FontSize="12" Foreground="#CFD8E3"/>
+                                        </DockPanel>
+                                        <ProgressBar Classes="thin" Value="{Binding Completion}" Foreground="{Binding ProgressBrush}"/>
+                                    </StackPanel>
+                                </Border>
+                            </Panel>
+                        </Border>
+                        <Border CornerRadius="11" BorderThickness="2" BorderBrush="{Binding CardBorder}"/>
+                        <Border IsVisible="{Binding Perfect}" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="8"
+                                Background="{StaticResource Gold}" CornerRadius="9" Padding="7,2">
+                            <TextBlock Text="★ 100%" Foreground="#1A1300" FontSize="11" FontWeight="Bold"/>
+                        </Border>
+                    </Panel>
+                    <TextBlock Text="{Binding Name}" Margin="2,10,0,0" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                    <TextBlock Text="{Binding CardSub}" Margin="2,2,0,0" Classes="muted" FontSize="12" TextTrimming="CharacterEllipsis"/>
+                </StackPanel>
+            </Button>
+        </DataTemplate>
+    </Window.Resources>
+
+    <Grid ColumnDefinitions="236,*">
+
+        <!-- ================= sidebar ================= -->
+        <Border Background="{StaticResource Panel}" BorderBrush="{StaticResource Line}" BorderThickness="0,0,1,0">
+            <DockPanel>
+                <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="22,26,0,26" Spacing="12">
+                    <Image Source="/assets/logo.png" Width="40" Height="40"/>
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock Text="Trophyline" FontWeight="Bold" FontSize="18"/>
+                        <TextBlock Text="STEAM ACHIEVEMENTS" FontSize="10" Foreground="{StaticResource Accent}" FontWeight="SemiBold"/>
+                    </StackPanel>
+                </StackPanel>
+
+                <!-- profile -->
+                <Border DockPanel.Dock="Bottom" Margin="14" Padding="12" CornerRadius="12" Background="#121A23">
+                    <StackPanel Orientation="Horizontal" Spacing="10">
+                        <Panel Width="40" Height="40">
+                            <Ellipse>
+                                <Ellipse.Fill>
+                                    <LinearGradientBrush StartPoint="0%,0%" EndPoint="100%,100%">
+                                        <GradientStop Color="#66C0F4" Offset="0"/>
+                                        <GradientStop Color="#7B5CFF" Offset="1"/>
+                                    </LinearGradientBrush>
+                                </Ellipse.Fill>
+                            </Ellipse>
+                            <TextBlock x:Name="AvatarLetter" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                       FontWeight="Bold" FontSize="17" Foreground="White"/>
+                        </Panel>
+                        <StackPanel VerticalAlignment="Center">
+                            <TextBlock x:Name="ProfileName" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" MaxWidth="140"/>
+                            <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,2,0,0">
+                                <Ellipse x:Name="TrackerDot" Width="7" Height="7" Fill="{StaticResource Green}" VerticalAlignment="Center"/>
+                                <TextBlock x:Name="TrackerText" Text="Tracking live" FontSize="12" Classes="muted"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+
+                <StackPanel>
+                    <RadioButton x:Name="NavOverview" Classes="nav" GroupName="nav" Tag="{StaticResource IconHome}" Content="Overview" IsChecked="True"/>
+                    <RadioButton x:Name="NavAchievements" Classes="nav" GroupName="nav" Tag="{StaticResource IconStar}" Content="Achievements"/>
+                    <RadioButton x:Name="NavGames" Classes="nav" GroupName="nav" Tag="{StaticResource IconGame}" Content="Games"/>
+                    <RadioButton x:Name="NavStorage" Classes="nav" GroupName="nav" Tag="{StaticResource IconDrive}" Content="Storage"/>
+                </StackPanel>
+            </DockPanel>
+        </Border>
+
+        <!-- ================= pages ================= -->
+        <Panel Grid.Column="1">
+
+            <!-- Overview -->
+            <ScrollViewer x:Name="OverviewPage">
+                <StackPanel Margin="30,26,30,30">
+                    <Border Height="290" CornerRadius="18" Background="{StaticResource Card}" ClipToBounds="True">
+                        <Panel>
+                            <Image x:Name="HeroImage" Stretch="UniformToFill" VerticalAlignment="Top"/>
+                            <Border>
+                                <Border.Background>
+                                    <LinearGradientBrush StartPoint="0%,0%" EndPoint="100%,0%">
+                                        <GradientStop Color="#F00B1016" Offset="0"/>
+                                        <GradientStop Color="#990B1016" Offset="0.45"/>
+                                        <GradientStop Color="#100B1016" Offset="1"/>
+                                    </LinearGradientBrush>
+                                </Border.Background>
+                            </Border>
+                            <Border>
+                                <Border.Background>
+                                    <LinearGradientBrush StartPoint="0%,0%" EndPoint="0%,100%">
+                                        <GradientStop Color="#000B1016" Offset="0.5"/>
+                                        <GradientStop Color="#CC0B1016" Offset="1"/>
+                                    </LinearGradientBrush>
+                                </Border.Background>
+                            </Border>
+                            <StackPanel VerticalAlignment="Bottom" Margin="32,0,0,30">
+                                <TextBlock Text="WELCOME BACK" Foreground="{StaticResource Accent}" FontWeight="Bold" FontSize="12"/>
+                                <TextBlock x:Name="Persona" FontSize="44" FontWeight="Bold" Margin="0,2,0,0"/>
+                                <TextBlock x:Name="HeroSub" Foreground="#C5D0DC" FontSize="15" Margin="0,4,0,0"/>
+                            </StackPanel>
+                            <Image x:Name="HeroLogo" MaxHeight="120" MaxWidth="340" HorizontalAlignment="Right" VerticalAlignment="Bottom"
+                                   Margin="0,0,32,28"/>
+                        </Panel>
+                    </Border>
+
+                    <UniformGrid x:Name="Tiles" Columns="3" Margin="-8,18,-8,0"/>
+
+                    <Border Classes="card" Padding="22,18" Margin="0,18,0,0">
+                        <StackPanel>
+                            <DockPanel>
+                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center" x:Name="HeatLegend"/>
+                                <StackPanel>
+                                    <TextBlock Text="Achievement activity" Classes="section"/>
+                                    <TextBlock x:Name="ActivitySub" Classes="muted" FontSize="13" Margin="0,3,0,0" TextWrapping="Wrap"/>
+                                </StackPanel>
+                            </DockPanel>
+                            <Viewbox Stretch="Uniform" StretchDirection="DownOnly" HorizontalAlignment="Left" Margin="0,16,0,0">
+                                <Canvas x:Name="Heatmap"/>
+                            </Viewbox>
+                        </StackPanel>
+                    </Border>
+
+                    <Grid ColumnDefinitions="*,18,*" Margin="0,18,0,0">
+                        <Border Classes="card" Padding="20,18,20,8">
+                            <StackPanel>
+                                <TextBlock Text="Recent unlocks" Classes="section" Margin="0,0,0,14"/>
+                                <ItemsControl x:Name="RecentList" ItemTemplate="{StaticResource AchCompact}"/>
+                            </StackPanel>
+                        </Border>
+                        <Border Grid.Column="2" Classes="card" Padding="20,18,20,8">
+                            <StackPanel>
+                                <TextBlock Text="Rarest unlocks" Classes="section" Margin="0,0,0,14"/>
+                                <ItemsControl x:Name="RareList" ItemTemplate="{StaticResource AchCompact}"/>
+                            </StackPanel>
+                        </Border>
+                    </Grid>
+
+                    <DockPanel Margin="0,26,0,14">
+                        <Button DockPanel.Dock="Right" Classes="plain" Click="ShowAllGames_Click" VerticalAlignment="Bottom">
+                            <TextBlock Text="See all games  →" Foreground="{StaticResource Accent}"/>
+                        </Button>
+                        <TextBlock Text="Most played" Classes="section"/>
+                    </DockPanel>
+                    <ItemsControl x:Name="MostPlayed" ItemTemplate="{StaticResource GameCard}">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                    </ItemsControl>
+                </StackPanel>
+            </ScrollViewer>
+
+            <!-- Achievements -->
+            <Grid x:Name="AchievementsPage" RowDefinitions="Auto,Auto,*" Margin="30,26,30,0" IsVisible="False">
+                <StackPanel>
+                    <TextBlock Text="Achievements" Classes="pageTitle"/>
+                    <TextBlock x:Name="AchSub" Classes="muted" Margin="0,4,0,0"/>
+                </StackPanel>
+                <Grid Grid.Row="1" ColumnDefinitions="*,12,230,12,200" Margin="0,18,0,8">
+                    <TextBox x:Name="AchSearch" Classes="search" Watermark="Search achievements or games…">
+                        <TextBox.InnerLeftContent>
+                            <PathIcon Data="{StaticResource IconSearch}" Width="15" Height="15" Margin="12,0,2,0" Foreground="{StaticResource Muted}"/>
+                        </TextBox.InnerLeftContent>
+                    </TextBox>
+                    <ComboBox x:Name="AchGame" Grid.Column="2" Classes="drop"/>
+                    <ComboBox x:Name="AchRarity" Grid.Column="4" Classes="drop"/>
+                </Grid>
+                <ListBox x:Name="AchList" Grid.Row="2" Classes="flat">
+                    <ListBox.DataTemplates>
+                        <DataTemplate DataType="local:HeaderRow">
+                            <TextBlock Text="{Binding Title}" Classes="groupHeader"/>
+                        </DataTemplate>
+                        <DataTemplate DataType="local:AchVM">
+                            <Border Classes="card" CornerRadius="12" Padding="12" Margin="0,0,10,8" Opacity="{Binding RowOpacity}">
+                                <Grid ColumnDefinitions="Auto,*,Auto,Auto">
+                                    <Border Width="56" Height="56" CornerRadius="9" Background="{StaticResource Line}"
+                                            BorderBrush="{Binding IconBorder}" BorderThickness="2" ClipToBounds="True">
+                                        <Image Source="{Binding Icon}" Stretch="UniformToFill"/>
+                                    </Border>
+                                    <StackPanel Grid.Column="1" Margin="14,0" VerticalAlignment="Center">
+                                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="15" TextWrapping="Wrap"/>
+                                        <TextBlock Text="{Binding Description}" Classes="muted" FontSize="13" TextWrapping="Wrap" Margin="0,2,0,0"
+                                                   IsVisible="{Binding HasDescription}"/>
+                                        <TextBlock Text="{Binding Game}" Foreground="{StaticResource Accent}" FontSize="13" Margin="0,3,0,0"
+                                                   IsVisible="{Binding ShowGame}"/>
+                                    </StackPanel>
+                                    <Border Grid.Column="2" CornerRadius="10" Padding="8,2" Background="{Binding PillBackground}" Margin="0,0,14,0"
+                                            IsVisible="{Binding HasRarity}" VerticalAlignment="Center" ToolTip.Tip="{Binding RarityTip}">
+                                        <TextBlock Text="{Binding PillText}" Foreground="{Binding PillBrush}" FontSize="12" FontWeight="SemiBold"/>
+                                    </Border>
+                                    <TextBlock Grid.Column="3" Text="{Binding When}" Classes="muted" FontSize="13" VerticalAlignment="Center"
+                                               MinWidth="120" TextAlignment="Right"/>
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </ListBox.DataTemplates>
+                </ListBox>
+                <TextBlock x:Name="AchEmpty" Grid.Row="2" Margin="0,40,0,0" HorizontalAlignment="Center" TextAlignment="Center"
+                           Classes="muted" IsVisible="False" TextWrapping="Wrap"/>
+            </Grid>
+
+            <!-- Games -->
+            <Grid x:Name="GamesPage" RowDefinitions="Auto,*" IsVisible="False">
+                <StackPanel Margin="30,26,30,0">
+                    <TextBlock Text="Games" Classes="pageTitle"/>
+                    <TextBlock x:Name="GamesSub" Classes="muted" Margin="0,4,0,0"/>
+                    <Grid ColumnDefinitions="*,12,220" Margin="0,18,0,18">
+                        <TextBox x:Name="GameSearch" Classes="search" Watermark="Search games…">
+                            <TextBox.InnerLeftContent>
+                                <PathIcon Data="{StaticResource IconSearch}" Width="15" Height="15" Margin="12,0,2,0" Foreground="{StaticResource Muted}"/>
+                            </TextBox.InnerLeftContent>
+                        </TextBox>
+                        <ComboBox x:Name="GameSort" Grid.Column="2" Classes="drop"/>
+                    </Grid>
+                </StackPanel>
+                <ScrollViewer Grid.Row="1">
+                    <ItemsControl x:Name="GamesGrid" ItemTemplate="{StaticResource GameCard}" Margin="30,4,14,20">
+                        <ItemsControl.ItemsPanel>
+                            <ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                    </ItemsControl>
+                </ScrollViewer>
+            </Grid>
+
+            <!-- One game -->
+            <Grid x:Name="GamePage" RowDefinitions="Auto,Auto,*" IsVisible="False">
+                <Panel Height="270" ClipToBounds="True">
+                    <Image x:Name="GameHero" Stretch="UniformToFill" VerticalAlignment="Top"/>
+                    <Border>
+                        <Border.Background>
+                            <LinearGradientBrush StartPoint="0%,0%" EndPoint="0%,100%">
+                                <GradientStop Color="#330B1016" Offset="0"/>
+                                <GradientStop Color="#660B1016" Offset="0.5"/>
+                                <GradientStop Color="#FF0B1016" Offset="1"/>
+                            </LinearGradientBrush>
+                        </Border.Background>
+                    </Border>
+                    <Button Classes="pill" Click="Back_Click" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="26,22,0,0">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <PathIcon Data="{StaticResource IconBack}" Width="14" Height="14"/>
+                            <TextBlock Text="Back"/>
+                        </StackPanel>
+                    </Button>
+                    <Panel VerticalAlignment="Bottom" Margin="30,0,30,14">
+                        <Image x:Name="GameLogo" MaxHeight="120" MaxWidth="420" HorizontalAlignment="Left"/>
+                        <TextBlock x:Name="GameTitle" FontSize="38" FontWeight="Bold" TextWrapping="Wrap" VerticalAlignment="Bottom"/>
+                    </Panel>
+                </Panel>
+                <StackPanel Grid.Row="1" Margin="30,4,30,0">
+                    <WrapPanel x:Name="GameStats"/>
+                    <ProgressBar x:Name="GameBar" Margin="0,14,0,0" Height="8" MinHeight="8" CornerRadius="4" Minimum="0" Maximum="1"
+                                 Background="{StaticResource Line}" Foreground="{StaticResource Accent}">
+                        <ProgressBar.Transitions>
+                            <Transitions>
+                                <DoubleTransition Property="Value" Duration="0:0:0.7" Easing="CubicEaseOut"/>
+                            </Transitions>
+                        </ProgressBar.Transitions>
+                    </ProgressBar>
+                    <StackPanel x:Name="GameChips" Orientation="Horizontal" Margin="0,18,0,4">
+                        <RadioButton x:Name="ChipAll" Classes="chip" GroupName="gameFilter" Content="All" IsChecked="True"/>
+                        <RadioButton x:Name="ChipUnlocked" Classes="chip" GroupName="gameFilter" Content="Unlocked"/>
+                        <RadioButton x:Name="ChipLocked" Classes="chip" GroupName="gameFilter" Content="Still to get"/>
+                    </StackPanel>
+                </StackPanel>
+                <ListBox x:Name="GameAchList" Grid.Row="2" Classes="flat" Margin="30,0,20,0">
+                    <ListBox.DataTemplates>
+                        <DataTemplate DataType="local:HeaderRow">
+                            <TextBlock Text="{Binding Title}" Classes="groupHeader"/>
+                        </DataTemplate>
+                        <DataTemplate DataType="local:AchVM">
+                            <Border Classes="card" CornerRadius="12" Padding="12" Margin="0,0,10,8" Opacity="{Binding RowOpacity}">
+                                <Grid ColumnDefinitions="Auto,*,Auto,Auto">
+                                    <Border Width="56" Height="56" CornerRadius="9" Background="{StaticResource Line}"
+                                            BorderBrush="{Binding IconBorder}" BorderThickness="2" ClipToBounds="True">
+                                        <Image Source="{Binding Icon}" Stretch="UniformToFill"/>
+                                    </Border>
+                                    <StackPanel Grid.Column="1" Margin="14,0" VerticalAlignment="Center">
+                                        <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="15" TextWrapping="Wrap"/>
+                                        <TextBlock Text="{Binding Description}" Classes="muted" FontSize="13" TextWrapping="Wrap" Margin="0,2,0,0"
+                                                   IsVisible="{Binding HasDescription}"/>
+                                    </StackPanel>
+                                    <Border Grid.Column="2" CornerRadius="10" Padding="8,2" Background="{Binding PillBackground}" Margin="0,0,14,0"
+                                            IsVisible="{Binding HasRarity}" VerticalAlignment="Center" ToolTip.Tip="{Binding RarityTip}">
+                                        <TextBlock Text="{Binding PillText}" Foreground="{Binding PillBrush}" FontSize="12" FontWeight="SemiBold"/>
+                                    </Border>
+                                    <TextBlock Grid.Column="3" Text="{Binding When}" Classes="muted" FontSize="13" VerticalAlignment="Center"
+                                               MinWidth="120" TextAlignment="Right"/>
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </ListBox.DataTemplates>
+                </ListBox>
+                <TextBlock x:Name="GameNoAch" Grid.Row="2" Margin="30,30,30,0" Classes="muted" TextWrapping="Wrap"
+                           IsVisible="False" Text="This game has no Steam achievements."/>
+            </Grid>
+
+            <!-- Storage -->
+            <Grid x:Name="StoragePage" RowDefinitions="Auto,*" IsVisible="False">
+                <StackPanel Margin="30,26,30,18">
+                    <TextBlock Text="Storage" Classes="pageTitle"/>
+                    <TextBlock x:Name="StorageSub" Classes="muted" Margin="0,4,0,0"/>
+                </StackPanel>
+                <ScrollViewer Grid.Row="1">
+                    <ItemsControl x:Name="StorageList" Margin="30,0,30,24">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate DataType="local:GameVM">
+                                <Button Classes="plain" Click="OpenGame_Click" Margin="0,0,0,10" HorizontalAlignment="Stretch"
+                                        HorizontalContentAlignment="Stretch">
+                                    <Border Classes="card row" CornerRadius="12" Padding="10">
+                                        <Grid ColumnDefinitions="Auto,*,Auto">
+                                            <Border Width="150" Height="70" CornerRadius="8" Background="{StaticResource CardHi}" ClipToBounds="True">
+                                                <Image Source="{Binding HeaderImage}" Stretch="UniformToFill"/>
+                                            </Border>
+                                            <StackPanel Grid.Column="1" Margin="16,0,20,0" VerticalAlignment="Center">
+                                                <StackPanel Orientation="Horizontal" Spacing="10">
+                                                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="15"/>
+                                                    <Border IsVisible="{Binding Stale}" CornerRadius="9" Padding="8,1" Background="#33F59E4B" VerticalAlignment="Center">
+                                                        <TextBlock Text="{Binding StaleText}" Foreground="#F5B36B" FontSize="11" FontWeight="SemiBold"/>
+                                                    </Border>
+                                                </StackPanel>
+                                                <TextBlock Text="{Binding StorageSub}" Classes="muted" FontSize="13" Margin="0,3,0,8"/>
+                                                <ProgressBar Classes="thin" Height="6" MinHeight="6" Value="{Binding SizeFraction}" Background="{StaticResource Line}">
+                                                    <ProgressBar.Foreground>
+                                                        <LinearGradientBrush StartPoint="0%,0%" EndPoint="100%,0%">
+                                                            <GradientStop Color="#66C0F4" Offset="0"/>
+                                                            <GradientStop Color="#7B5CFF" Offset="1"/>
+                                                        </LinearGradientBrush>
+                                                    </ProgressBar.Foreground>
+                                                </ProgressBar>
+                                            </StackPanel>
+                                            <TextBlock Grid.Column="2" Text="{Binding SizeText}" FontSize="20" FontWeight="SemiBold"
+                                                       VerticalAlignment="Center" MinWidth="90" TextAlignment="Right"/>
+                                        </Grid>
+                                    </Border>
+                                </Button>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                </ScrollViewer>
+            </Grid>
+
+            <!-- loading / problem overlay -->
+            <Border x:Name="Overlay" Background="{StaticResource Bg}" IsVisible="False">
+                <TextBlock x:Name="OverlayText" HorizontalAlignment="Center" VerticalAlignment="Center" TextAlignment="Center"
+                           Classes="muted" FontSize="15" TextWrapping="Wrap" MaxWidth="560"/>
+            </Border>
+        </Panel>
+    </Grid>
+</Window>

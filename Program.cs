@@ -65,6 +65,18 @@ static class Program
 
     static int OpenWindow(string[] args)
     {
+        // A development build (bin folder) opened by hand: open the installed Trophyline instead,
+        // so the window you get is always the real, self-updating one.
+        if (args.Length == 0 && Platform.Windows && Environment.GetEnvironmentVariable("TROPHYLINE_HOME") == null
+            && Environment.ProcessPath is string self && self.Contains(@"\bin\"))
+        {
+            var installed = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", AppName, AppName + ".exe");
+            if (File.Exists(installed))
+            {
+                Process.Start(new ProcessStartInfo(installed) { UseShellExecute = true });
+                return 0;
+            }
+        }
         if (args.Length == 0 || args[0] is not ("--snapshot" or "--popup")) EnsureTrackerRunning();
         App.Args = args;
         AppDomain.CurrentDomain.UnhandledException += (_, e) => LogError("unhandled: " + e.ExceptionObject);

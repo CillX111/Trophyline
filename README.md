@@ -77,25 +77,25 @@ The files aren't signed by Microsoft or Apple, so the first launch shows a warni
 
 ## How it works
 
-- **Online needs a Trophyline account** (Settings → Trophyline account): pick a username
-  (3–20 letters, numbers or `_`) and a password (8+ characters). Log in with it on any
-  computer; Log out keeps your account and places. Passwords are stored only as a salted
-  hash, 5 wrong tries lock the account for 5 minutes, and there's no email, so a lost
-  password can't be reset. Profiles made before 1.7.0 get a username and password once.
+- **Your Trophyline account is your Steam account** (Settings → Trophyline account → Log
+  in with Steam). No extra password: Steam's own login page opens in your browser and
+  Trophyline never sees your Steam password. On networks that block that page (some school
+  and work networks), use a **name code**: put the short code Trophyline shows (like
+  `TL4F9A2`) into your Steam profile name for a moment, the server sees it through Steam's
+  Web API, and you're in (then change your name back). Log in the same way on any
+  computer; Log out keeps your account and places. Profiles from before keep everything
+  when that computer logs in with Steam once.
   Online, the app only sends your chosen name, equipped icon, profile links and the chat
   messages you write. Never your Steam login.
   Delete account removes all of it from the server. The server is a Supabase project set
   up by [`supabase/trophyline.sql`](supabase/trophyline.sql): the tables can't be read
   directly, only through its `tl_*` functions, and every change needs your login.
-- **Only numbers from Steam are shown online** (Settings → Trophyline account → Link Steam
-  account). Linking uses Steam's own login page, or a **name code** for networks that block
-  it (you put a short code like `TL-3F9A21` in your Steam profile name for a minute). The
-  Trophyline server confirms it with Steam, then reads that account's games and achievements
-  from Steam's Web API itself and re-checks every 6 hours. Levels, XP, season XP, game
-  counts, best games and latest unlocks online all come only from there, so editing files on
-  your computer changes nothing. Your Steam profile's **Game details** must be public.
-  Online XP doesn't include tracked sessions (Steam doesn't know about them), and a shop
-  icon only shows if your Steam-checked level could have bought it.
+- **Only numbers from Steam are shown online.** After you log in, the Trophyline server
+  reads your games and achievements from Steam's Web API itself and re-checks every 6 hours.
+  Levels, XP, season XP, game counts, best games and latest unlocks online all come only
+  from there, so editing files on your computer changes nothing. Your Steam profile's
+  **Game details** must be public. Online XP doesn't include tracked sessions (Steam doesn't
+  know about them), and a shop icon only shows if your Steam-checked level could have bought it.
 - **Cheat checks**: the server pauses a player (not ranked, until the owner looks) when
   almost a whole game was unlocked in one second, when achievements appear in 3+ games
   within one minute, or when a game with no playtime has achievements. These are typical of

@@ -31,6 +31,21 @@ const steam = createServer(async (req, res) => {
     return send(200, `ns:http://specs.openid.net/auth/2.0\nis_valid:${ok}\n`);
   }
   const p = url.searchParams;
+  // KEEP=1: any Steam account the app asks about exists, with the same games as the test account
+  for (const k of ["steamid", "steamids"]) {
+    const sid = p.get(k);
+    if (process.env.KEEP === "1" && sid && /^7656119\d{10}$/.test(sid) && !accounts[sid])
+      accounts[sid] = { private: false, name: "Tester", games: structuredClone(accounts["76561198000000009"]?.games ?? {}) };
+  }
+  if (url.pathname === "/test/name") { // the test changes a Steam profile name
+    account(p.get("steamid")).name = p.get("name");
+    return send(200, { ok: true });
+  }
+  if (url.pathname.includes("GetPlayerSummaries")) {
+    if (p.get("key") !== "fake-key") return send(403, "<html>Forbidden</html>");
+    const sid = p.get("steamids");
+    return send(200, { response: { players: accounts[sid] ? [{ steamid: sid, personaname: accounts[sid].name ?? accounts[sid].persona ?? "Player " + sid.slice(-2) }] : [] } });
+  }
   if (url.pathname.includes("GetGlobalAchievementPercentagesForApp")) {
     const appid = p.get("gameid");
     const g = Object.values(accounts).map((a) => a.games[appid]).find(Boolean);
@@ -42,10 +57,6 @@ const steam = createServer(async (req, res) => {
     const g = Object.values(accounts).map((a) => a.games[appid]).find(Boolean);
     return send(200, { game: { availableGameStats: { achievements: (g?.ach ?? []).map((a) => ({ name: a.name, displayName: "Nice " + a.name,
       icon: `https://cdn.example/steamcommunity/public/images/apps/${appid}/${a.name.toLowerCase()}.jpg` })) } } });
-  }
-  if (url.pathname.includes("GetPlayerSummaries")) {
-    const sid = p.get("steamids");
-    return send(200, { response: { players: accounts[sid] ? [{ steamid: sid, personaname: accounts[sid].persona ?? "Player" }] : [] } });
   }
   const acc = accounts[p.get("steamid")];
   if (url.pathname.includes("GetOwnedGames")) {
@@ -129,36 +140,56 @@ if (process.env.KEEP !== "1") {
 
   check("xp table matches the app", [xpFor(0.5), xpFor(3), xpFor(8), xpFor(15), xpFor(30), xpFor(70), xpFor(null)].join() === "150,100,60,40,25,15,25");
 
-  const reg = await rpc("tl_register", { p_username: "alice_test", p_password: "alice-password-1" });
-  check("register", reg.ok, reg);
+  account(A).name = "Alice";
+  const oldReg = await rpc("tl_register", { p_username: "alice_test", p_password: "alice-password-1" });
+  check("sign-up with a password is switched off", /logs in with your Steam account/.test(oldReg.error ?? ""), oldReg);
+
+  let r = await fn({ action: "login", openid: openid(A, "forged") });
+  check("forged sign-in is refused", /couldn't confirm/.test(r.error ?? ""), r);
+  r = await fn({ action: "login", openid: { ...openid(A), "openid.return_to": "https://evil.example/steam" } });
+  check("sign-in made for another site is refused", /wasn't made for Trophyline/.test(r.error ?? ""), r);
+  r = await fn({ action: "login", openid: openid(A, "good", "2020-01-01T00:00:00Zold") });
+  check("old sign-in is refused", /too old/.test(r.error ?? ""), r);
+  const good = openid(A);
+  const reg = await fn({ action: "login", openid: good });
+  check("log in with Steam creates the account", reg.ok && reg.new === true && reg.steam_id === A && reg.name === "Alice" && !!reg.secret, reg);
   const me = { id: reg.id, secret: reg.secret };
+  r = await fn({ action: "login", openid: good });
+  check("the same sign-in can't be used twice", /already used/.test(r.error ?? ""), r);
+  r = await fn({ action: "login", openid: openid(A) });
+  check("logging in again opens the same account", r.ok && r.id === me.id && !r.new && r.secret !== me.secret, r);
 
   const direct = await rpc("tl_srv_apply", { p_id: me.id, p: { owned: [], games: [], partial: false } });
   check("app key can't store Steam results itself", !!direct.httpError && /permission denied/.test(direct.httpError), direct);
-  const direct2 = await rpc("tl_srv_link", { p_id: me.id, p_secret: me.secret, p_steam_id: A, p_nonce: "x" });
-  check("app key can't link without Steam's check", !!direct2.httpError, direct2);
+  const direct2 = await rpc("tl_srv_steam_login", { p_steam_id: A, p_name: "x", p_nonce: "x" });
+  check("app key can't log in without Steam's check", !!direct2.httpError, direct2);
 
-  let r = await fn({ action: "verify", ...me });
-  check("verify before linking asks to link", /Link your Steam/.test(r.error ?? ""), r);
+  // a profile from before Steam login is kept when its computer logs in with Steam
+  await sql(`insert into players (id, secret_hash, name, created, updated) values ('legacyprofile0000000001', tl_hash('legacy-secret-legacy-secret-1'), 'Oldie', 1, 1)`);
+  const L1 = "76561198000000005";
+  account(L1).name = "Oldie on Steam";
+  r = await fn({ action: "login", id: "legacyprofile0000000001", secret: "legacy-secret-legacy-secret-1", openid: openid(L1) });
+  check("an old profile becomes the Steam account's profile", r.ok && r.id === "legacyprofile0000000001" && r.name === "Oldie", r);
 
-  r = await fn({ action: "link", ...me, openid: openid(A, "forged") });
-  check("forged sign-in is refused", /couldn't confirm/.test(r.error ?? ""), r);
-  r = await fn({ action: "link", ...me, openid: { ...openid(A), "openid.return_to": "https://evil.example/steam" } });
-  check("sign-in made for another site is refused", /wasn't made for Trophyline/.test(r.error ?? ""), r);
-  r = await fn({ action: "link", ...me, openid: openid(A, "good", "2020-01-01T00:00:00Zold") });
-  check("old sign-in is refused", /too old/.test(r.error ?? ""), r);
-  r = await fn({ action: "link", id: me.id, secret: "wrong-secret-wrong-secret-wrong", openid: openid(A) });
-  check("someone else's Trophyline login can't link", /Log in/.test(r.error ?? ""), r);
-  const good = openid(A);
-  r = await fn({ action: "link", ...me, openid: good });
-  check("genuine sign-in links the account", r.ok && r.steam_id === A, r);
-  r = await fn({ action: "link", ...me, openid: good });
-  check("the same sign-in can't be used twice", /already used/.test(r.error ?? ""), r);
-
-  // a second Trophyline account can't take the same Steam account
-  const reg2 = await rpc("tl_register", { p_username: "mallory_test", p_password: "mallory-password-1" });
-  r = await fn({ action: "link", id: reg2.id, secret: reg2.secret, openid: openid(A) });
-  check("a Steam account can only be linked once", /already linked/.test(r.error ?? ""), r);
+  // name code, for networks that block Steam's login page
+  const N = "76561198000000006";
+  account(N).name = "Nina";
+  r = await fn({ action: "code_start", steam_id: "123" });
+  check("name code needs a real Steam id", !!r.error, r);
+  const cs = await fn({ action: "code_start", steam_id: N });
+  check("name code is handed out", cs.ok && /^TL[0-9A-F]{5}$/.test(cs.code) && cs.name === "Nina", cs);
+  r = await fn({ action: "code_finish", challenge: cs.challenge });
+  check("without the code in the name it waits", r.waiting === true && /Add TL/.test(r.error), r);
+  account(N).name = "Nina " + cs.code.toLowerCase();
+  r = await fn({ action: "code_finish", challenge: cs.challenge });
+  check("with the code in the name it logs in", r.ok && r.steam_id === N && r.name === "Nina", r);
+  r = await fn({ action: "code_finish", challenge: cs.challenge });
+  check("a used code can't log in again", /expired/.test(r.error ?? ""), r);
+  r = await fn({ action: "code_finish", challenge: "made-up" });
+  check("a made-up code is refused", /expired/.test(r.error ?? ""), r);
+  for (let i = 0; i < 5; i++) await fn({ action: "code_start", steam_id: N });
+  r = await fn({ action: "code_start", steam_id: N });
+  check("codes can't be spammed", /Too many codes/.test(r.error ?? ""), r);
 
   // client claims huge numbers before verification: shown on profile, never ranked
   await rpc("tl_upsert", { p: { id: me.id, secret: me.secret, name: "Alice", xp: 9999999, level: 300, perfect: 999, over75: 999, seasons: [{ id: "2026-4", xp: 999999 }] } });
@@ -219,11 +250,12 @@ if (process.env.KEEP !== "1") {
   check("app key can't write the profile unlocks", !!fakeRecent.httpError, fakeRecent);
 
   // ----- linking with a name code -----
-  const E = "76561198000000005";
+  const E = "76561198000000007";
   account(E).persona = "Erin";
   account(E).games = { 900: { minutes: 120, stats: true, ach: [{ name: "Z0", got: true, time: now - 7200, pct: 2 }, { name: "Z1", got: false, pct: 2 }] } };
-  const reg3 = await rpc("tl_register", { p_username: "erin_test", p_password: "erin-password-1" });
-  const er = { id: reg3.id, secret: reg3.secret };
+  // (a profile from before Steam login, linking with the 1.8.0 name code)
+  await sql(`insert into players (id, secret_hash, name, created, updated) values ('erinprofile000000000001', tl_hash('erin-secret-erin-secret-erin-1'), 'Erin', 1, 1)`);
+  const er = { id: "erinprofile000000000001", secret: "erin-secret-erin-secret-erin-1" };
   let cb = await rpc("tl_code_begin", { p_id: er.id, p_secret: er.secret, p_steam_id: A });
   check("a code for a Steam account someone else linked is refused", /already linked/.test(cb.error ?? ""), cb);
   cb = await rpc("tl_code_begin", { p_id: er.id, p_secret: er.secret, p_steam_id: E });
@@ -263,8 +295,8 @@ if (process.env.KEEP !== "1") {
   const B = "76561198000000002";
   account(B).games = Object.fromEntries(Array.from({ length: 130 }, (_, i) => [1000 + i,
     { minutes: 60, stats: true, ach: [{ name: "X", got: true, time: old + i * 86400 * 2, pct: 70 }, { name: "Y", got: false }] }]));
-  r = await fn({ action: "link", id: reg2.id, secret: reg2.secret, openid: openid(B) });
-  check("second player links another account", r.ok, r);
+  const reg2 = await fn({ action: "login", openid: openid(B) });
+  check("second player logs in with another account", reg2.ok && reg2.id !== me.id, reg2);
   r = await fn({ action: "verify", id: reg2.id, secret: reg2.secret });
   check("big library: first part", r.ok && r.partial === true && r.left === 10 && r.state === "checking", r);
   pl = (await query(`select ranked from players where id = '${reg2.id}'`))[0];

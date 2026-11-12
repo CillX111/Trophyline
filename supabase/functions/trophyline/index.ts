@@ -1,11 +1,13 @@
 // Trophyline server function (Supabase Edge Function "trophyline").
 //
-// It does the two things the database can't do on its own:
-//   link   - confirms a "Sign in with Steam" with Steam itself, then links that Steam account
-//   verify - asks Steam (with the server owner's Steam Web API key) which games and achievements
-//            the linked account really has, and stores that as the player's verified numbers
-//   code   - links a Steam account by a code the player put in their Steam profile name
-//            (for networks that block Steam's login page)
+// It does what the database can't do on its own:
+//   login        - confirms a "Sign in with Steam" with Steam itself, then logs in (or signs up)
+//                  that Steam account: a Trophyline account is a Steam account
+//   code_start / code_finish - the same for networks that block Steam's login page: the player
+//                  puts a short code in their Steam profile name, and Steam's Web API shows it
+//   verify       - asks Steam (with the server owner's Steam Web API key) which games and
+//                  achievements the account really has, and stores that as its verified numbers
+//   link / code  - link a Steam account to a logged-in profile (app 1.8.0)
 // Players' computers never send their own numbers here, so editing local files changes nothing.
 //
 // Setup (Supabase dashboard): Edge Functions -> Deploy a new function -> Via Editor, name it
@@ -103,11 +105,67 @@ export function xpFor(rarity: number | null): number {
   return 15;
 }
 
+// ---------- logging in with Steam ----------
+
+/** The Steam profile name of an account (public even when the rest of the profile is private). */
+async function personaName(steamId: string): Promise<{ name?: string; error?: string }> {
+  const key = env("STEAM_API_KEY");
+  if (!key) return { error: "The Trophyline server doesn't have a Steam API key yet. Ask the server owner to add it." };
+  const r = await steam(`/ISteamUser/GetPlayerSummaries/v2/?key=${encodeURIComponent(key)}&steamids=${steamId}&format=json`);
+  if (r.status === 401 || r.status === 403) return { error: "Steam refused the server's API key. Ask the server owner to check it." };
+  if (r.status !== 200) return { error: `Steam didn't answer (${r.status}). Try again in a minute.` };
+  const p = r.body?.response?.players?.[0];
+  if (!p || p.steamid !== steamId) return { error: "Steam doesn't know this account." };
+  return { name: String(p.personaname ?? "") };
+}
+
+/** Log in (or sign up) with Steam's own login page: the app sends Steam's signed answer. */
+async function login(body: any): Promise<any> {
+  const checked = await checkOpenId(body?.openid);
+  if (checked.error) return checked;
+  const who = await personaName(checked.steamId!);
+  if (who.error) return who;
+  return await db("tl_srv_steam_login", {
+    p_steam_id: checked.steamId, p_name: who.name, p_nonce: checked.nonce + "|" + checked.steamId,
+    p_id: body?.id ?? null, p_secret: body?.secret ?? null,
+  });
+}
+
+/** For networks that block Steam's login page: a code to put in your Steam profile name. */
+async function codeStart(body: any): Promise<any> {
+  const sid = String(body?.steam_id ?? "");
+  if (!/^7656119\d{10}$/.test(sid)) return { error: "That is not a Steam account." };
+  const who = await personaName(sid);
+  if (who.error) return who;
+  const r = await db("tl_srv_code_start", { p_steam_id: sid });
+  return r?.error ? r : { ...r, name: who.name };
+}
+
+/** Checks whether the code is in the Steam profile name now, and logs in if it is. */
+async function codeFinish(body: any): Promise<any> {
+  const c = await db("tl_srv_code_get", { p_challenge: String(body?.challenge ?? "") });
+  if (c?.error) return c;
+  const who = await personaName(c.steam_id);
+  if (who.error) return who;
+  if (!who.name!.toUpperCase().includes(c.code)) {
+    return { error: `Steam still shows your profile name as "${who.name}". Add ${c.code} to it, wait a few seconds and try again.`, waiting: true };
+  }
+  // the name without the code, so a new profile isn't called "ftgt6565 TL4F9A2"
+  const clean = who.name!.replace(new RegExp(c.code, "ig"), "").replace(/\s+/g, " ").trim();
+  const r = await db("tl_srv_steam_login", {
+    p_steam_id: c.steam_id, p_name: clean, p_nonce: "code|" + body.challenge,
+    p_id: body?.id ?? null, p_secret: body?.secret ?? null,
+  });
+  if (!r?.error) await db("tl_srv_code_done", { p_challenge: String(body.challenge) });
+  return r;
+}
+
 // ---------- link: Sign in with Steam ----------
 
-async function link(body: any): Promise<any> {
+/** Checks a "Sign in with Steam" answer with Steam itself. Returns the account or an error. */
+async function checkOpenId(raw: any): Promise<{ steamId?: string; nonce?: string; error?: string }> {
   const q: Record<string, string> = {};
-  for (const [k, v] of Object.entries(body?.openid ?? {})) if (k.startsWith("openid.")) q[k] = String(v);
+  for (const [k, v] of Object.entries(raw ?? {})) if (k.startsWith("openid.")) q[k] = String(v);
 
   if (q["openid.mode"] !== "id_res") return { error: "The sign-in was cancelled." };
   if (q["openid.op_endpoint"] !== OP_ENDPOINT) return { error: "The answer didn't come from Steam." };
@@ -120,14 +178,11 @@ async function link(body: any): Promise<any> {
   for (const f of ["op_endpoint", "claimed_id", "identity", "return_to", "response_nonce"]) {
     if (!signed.includes(f)) return { error: "Steam's answer is incomplete. Try again." };
   }
-  // the nonce starts with the time Steam made it; only fresh sign-ins count
   const nonce = q["openid.response_nonce"] ?? "";
   const made = Date.parse(nonce.slice(0, 20));
   if (!Number.isFinite(made) || Math.abs(Date.now() - made) > 15 * 60 * 1000) {
     return { error: "This sign-in is too old. Try again." };
   }
-
-  // ask Steam whether the answer is genuine
   const form = new URLSearchParams(q);
   form.set("openid.mode", "check_authentication");
   let text = "";
@@ -138,8 +193,14 @@ async function link(body: any): Promise<any> {
     return { error: "Couldn't reach Steam to confirm the sign-in. Try again in a minute." };
   }
   if (!/^is_valid\s*:\s*true\s*$/m.test(text)) return { error: "Steam couldn't confirm the sign-in. Try again." };
+  return { steamId: m[1], nonce };
+}
 
-  return await db("tl_srv_link", { p_id: body.id, p_secret: body.secret, p_steam_id: m[1], p_nonce: nonce + "|" + m[1] });
+/** Links a Steam account to an account logged in on this computer (older app versions). */
+async function link(body: any): Promise<any> {
+  const checked = await checkOpenId(body?.openid);
+  if (checked.error) return checked;
+  return await db("tl_srv_link", { p_id: body.id, p_secret: body.secret, p_steam_id: checked.steamId, p_nonce: checked.nonce + "|" + checked.steamId });
 }
 
 // ---------- verify: read the account's games and achievements from Steam ----------
@@ -271,6 +332,9 @@ export async function handle(req: Request): Promise<Response> {
   let body: any;
   try { body = await req.json(); } catch { return json({ error: "Bad request" }, 400); }
   try {
+    if (body?.action === "login") return json(await login(body));
+    if (body?.action === "code_start") return json(await codeStart(body));
+    if (body?.action === "code_finish") return json(await codeFinish(body));
     if (body?.action === "link") return json(await link(body));
     if (body?.action === "verify") return json(await verify(body));
     if (body?.action === "code") return json(await code(body));

@@ -65,60 +65,74 @@ static class Online
         return new JsonObject { ["p_id"] = cfg.OnlineId, ["p_secret"] = cfg.OnlineSecret };
     }
 
-    // ---------- joining ----------
+    // ---------- accounts: your Steam account is your Trophyline account ----------
 
-    static string Random(int length)
-    {
-        const string abc = "abcdefghijklmnopqrstuvwxyz0123456789";
-        return string.Concat(Enumerable.Range(0, length).Select(_ => abc[RandomNumberGenerator.GetInt32(abc.Length)]));
-    }
-
-    // ---------- accounts ----------
-
-    /// Logged in on this computer (with an account, or a profile from before accounts existed).
+    /// Logged in on this computer.
     public static bool LoggedIn => Program.Settings().OnlineId.Length > 0;
 
-    /// A profile from before accounts existed: it still needs a username and password.
-    public static bool NeedsLogin => LoggedIn && Program.Settings().OnlineUser.Length == 0;
+    /// A profile from before Steam login (it keeps everything once you log in with Steam).
+    public static bool NeedsLogin => LoggedIn && Program.Settings().VerifiedSteam.Length == 0;
 
-    public static string Username => Program.Settings().OnlineUser;
-
-    /// Runs tl_register / tl_login / tl_claim and remembers the session. Returns an error text or null.
-    static async Task<string?> StartSession(string fn, JsonObject args)
+    /// Remembers the session the server opened. Returns an error text or null.
+    static string? StoreSession(JsonNode? r)
     {
-        if (!Available) return "The Trophyline server isn't set up.";
-        var (r, err) = await Rpc(fn, args);
-        if (err != null) return err;
-        if (r?["error"]?.GetValue<string>() is string problem) return problem;
         var id = r?["id"]?.GetValue<string>();
         var secret = r?["secret"]?.GetValue<string>();
-        if (string.IsNullOrEmpty(id) || string.IsNullOrEmpty(secret)) return "The server gave an unexpected answer.";
+        var steam = r?["steam_id"]?.GetValue<string>();
+        if (string.IsNullOrEmpty(id) || string.IsNullOrEmpty(secret) || string.IsNullOrEmpty(steam)) return "The server gave an unexpected answer.";
         var cfg = Program.Settings();
         bool sameProfile = cfg.OnlineId == id;
         cfg.OnlineId = id;
         cfg.OnlineSecret = secret;
-        cfg.OnlineUser = r?["username"]?.GetValue<string>() ?? "";
-        cfg.OnlineName = r?["name"]?.GetValue<string>() is { Length: > 0 } n ? n : cfg.OnlineUser;
+        cfg.OnlineUser = "";
+        if (r?["name"]?.GetValue<string>() is { Length: > 0 } n) cfg.OnlineName = n;
         cfg.OnlineEnabled = true;
-        if (!sameProfile) { cfg.OnlineSteamAccount = ""; cfg.AvatarHash = ""; cfg.VerifiedSteam = ""; cfg.LastVerify = 0; }
+        cfg.VerifiedSteam = steam;
+        cfg.OnlineSteamAccount = steam; // your profile shows this account's games
+        cfg.LastVerify = 0;
+        if (!sameProfile) cfg.AvatarHash = "";
         Program.SaveSettings(cfg);
         lastUpload = default;
         return null;
     }
 
-    public static Task<string?> Register(string username, string password) =>
-        StartSession("tl_register", new JsonObject { ["p_username"] = username.Trim(), ["p_password"] = password });
-
-    public static Task<string?> Login(string username, string password) =>
-        StartSession("tl_login", new JsonObject { ["p_username"] = username.Trim(), ["p_password"] = password });
-
-    /// Gives the profile already on this computer a username and password.
-    public static Task<string?> Claim(string username, string password)
+    /// The profile on this computer, if any (so an old profile becomes your Steam account's profile).
+    static void AddMe(JsonObject body)
     {
-        var args = Me();
-        args["p_username"] = username.Trim();
-        args["p_password"] = password;
-        return StartSession("tl_claim", args);
+        var cfg = Program.Settings();
+        if (cfg.OnlineId.Length > 0) { body["id"] = cfg.OnlineId; body["secret"] = cfg.OnlineSecret; }
+    }
+
+    /// Log in with Steam's own login page (opens in the browser). Returns an error text or null.
+    public static async Task<string?> LoginWithSteam(CancellationToken cancel)
+    {
+        if (!Available) return "The Trophyline server isn't set up.";
+        var s = await SteamAccounts.SignIn(cancel, forServer: true);
+        if (s.Error != null || s.Params == null) return s.Error ?? "The sign-in didn't work.";
+        var openid = new JsonObject();
+        foreach (var (k, v) in s.Params) openid[k] = v;
+        var body = new JsonObject { ["action"] = "login", ["openid"] = openid };
+        AddMe(body);
+        var (r, err) = await CallFunction(body);
+        return err ?? StoreSession(r);
+    }
+
+    /// Name code login, step 1: a code for this Steam account's profile name. Returns (code, challenge, error).
+    public static async Task<(string? Code, string? Challenge, string? Error)> StartCode(string steamId)
+    {
+        if (!Available) return (null, null, "The Trophyline server isn't set up.");
+        var (r, err) = await CallFunction(new JsonObject { ["action"] = "code_start", ["steam_id"] = steamId });
+        if (err != null) return (null, null, err);
+        return (r?["code"]?.GetValue<string>(), r?["challenge"]?.GetValue<string>(), null);
+    }
+
+    /// Name code login, step 2: logs in once Steam shows the code in the profile name. Returns an error text or null.
+    public static async Task<string?> FinishCode(string challenge)
+    {
+        var body = new JsonObject { ["action"] = "code_finish", ["challenge"] = challenge };
+        AddMe(body);
+        var (r, err) = await CallFunction(body);
+        return err ?? StoreSession(r);
     }
 
     /// Logs this computer out. The account and its place on the leaderboards stay.
@@ -137,14 +151,6 @@ static class Online
         Program.SaveSettings(cfg);
     }
 
-    public static async Task<string?> ChangePassword(string oldPassword, string newPassword)
-    {
-        var args = Me();
-        args["p_old"] = oldPassword;
-        args["p_new"] = newPassword;
-        var (r, err) = await Rpc("tl_change_password", args);
-        return err ?? r?["error"]?.GetValue<string>();
-    }
 
     /// Turns online off and deletes your entry (and your chat messages) from the server.
     public static async Task<string?> Disable()
@@ -308,57 +314,6 @@ static class Online
     }
 
     public static bool SteamLinked => Program.Settings().VerifiedSteam.Length > 0;
-
-    /// Sign in with Steam, and the server links that account to your Trophyline account. Returns an error or null.
-    public static async Task<string?> LinkSteam(CancellationToken cancel)
-    {
-        if (!LoggedIn || NeedsLogin) return "Log in to your Trophyline account first.";
-        var s = await SteamAccounts.SignIn(cancel, forServer: true);
-        if (s.Error != null || s.Params == null) return s.Error ?? "The sign-in didn't work.";
-        var openid = new JsonObject();
-        foreach (var (k, v) in s.Params) openid[k] = v;
-        var cfg = Program.Settings();
-        var (r, err) = await CallFunction(new JsonObject
-        {
-            ["action"] = "link", ["id"] = cfg.OnlineId, ["secret"] = cfg.OnlineSecret, ["openid"] = openid,
-        });
-        if (err != null) return err;
-        cfg = Program.Settings();
-        cfg.VerifiedSteam = r?["steam_id"]?.GetValue<string>() ?? s.Id64 ?? "";
-        cfg.OnlineSteamAccount = cfg.VerifiedSteam; // your profile shows this account's games
-        cfg.LastVerify = 0;
-        Program.SaveSettings(cfg);
-        return null;
-    }
-
-    /// Linking with a name code (for networks that block Steam's login page): returns the code to put in
-    /// the Steam profile name of this account, or an error.
-    public static async Task<(string? Code, string? Error)> StartSteamCode(string steamId64)
-    {
-        if (!LoggedIn || NeedsLogin) return (null, "Log in to your Trophyline account first.");
-        var args = Me();
-        args["p_steam_id"] = steamId64;
-        var (r, err) = await Rpc("tl_code_begin", args);
-        if (err != null) return (null, err);
-        if (r?["error"]?.GetValue<string>() is string e) return (null, e);
-        return (r?["code"]?.GetValue<string>(), null);
-    }
-
-    /// Asks the server to look for the code in the Steam profile name. (true, null) once linked;
-    /// (false, null) while the name doesn't have it yet; (false, error) when something's wrong.
-    public static async Task<(bool Linked, string? Error)> CheckSteamCode()
-    {
-        var cfg = Program.Settings();
-        var (r, err) = await CallFunction(new JsonObject { ["action"] = "code", ["id"] = cfg.OnlineId, ["secret"] = cfg.OnlineSecret });
-        if (err != null) return (false, err);
-        if (r?["linked"]?.GetValue<bool>() != true) return (false, null);
-        cfg = Program.Settings();
-        cfg.VerifiedSteam = r["steam_id"]?.GetValue<string>() ?? "";
-        cfg.OnlineSteamAccount = cfg.VerifiedSteam;
-        cfg.LastVerify = 0;
-        Program.SaveSettings(cfg);
-        return (true, null);
-    }
 
     static readonly SemaphoreSlim verifying = new(1, 1);
 

@@ -344,6 +344,8 @@ declare
   v_salt text := tl_token();
   v_now bigint := tl_now();
 begin
+  -- accounts now log in with Steam only (supabase/functions/trophyline, action login)
+  return jsonb_build_object('error', 'Trophyline now logs in with your Steam account. Update Trophyline (Settings, Updates) and press Log in with Steam.');
   if problem is not null then return jsonb_build_object('error', problem); end if;
   if exists (select 1 from players where lower(username) = lower(p_username)) then
     return jsonb_build_object('error', 'That username is taken');
@@ -359,6 +361,8 @@ declare
   pl players;
   v_now bigint := tl_now();
 begin
+  -- accounts now log in with Steam only (supabase/functions/trophyline, action login)
+  return jsonb_build_object('error', 'Trophyline now logs in with your Steam account. Update Trophyline (Settings, Updates) and press Log in with Steam.');
   select * into pl from players where lower(username) = lower(coalesce(p_username, ''));
   if pl.id is null then return jsonb_build_object('error', 'Wrong username or password'); end if;
   if pl.banned then return jsonb_build_object('error', 'This account was banned'); end if;
@@ -381,6 +385,8 @@ declare
   problem text := tl_check_login(p_username, p_password);
   v_salt text := tl_token();
 begin
+  -- accounts now log in with Steam only (supabase/functions/trophyline, action login)
+  return jsonb_build_object('error', 'Trophyline now logs in with your Steam account. Update Trophyline (Settings, Updates) and press Log in with Steam.');
   if tl_auth(p_id, p_secret) is null then return jsonb_build_object('error', 'Not your profile'); end if;
   if exists (select 1 from players where id = p_id and username is not null) then
     return jsonb_build_object('error', 'This profile already has a login');
@@ -975,6 +981,97 @@ begin
     'season_xp', coalesce((select xp from season_scores where season = tl_season()->>'id' and player = me), 0));
 end $$;
 
+-- ---------- logging in with Steam ----------
+-- A Trophyline account is a Steam account. The server function proves it's yours, either with
+-- Steam's own login page or (on networks that block that page) a short code you put in your
+-- Steam profile name for a minute. Then tl_srv_steam_login opens a session.
+
+create table if not exists login_codes (
+  id       text primary key,                -- random, given to the app
+  steam_id text not null,
+  code     text not null,                   -- what goes in the Steam profile name, e.g. TL4F9A2
+  created  bigint not null
+);
+alter table login_codes enable row level security;
+revoke all on login_codes from anon, authenticated;
+
+create or replace function tl_srv_steam_login(p_steam_id text, p_name text, p_nonce text,
+                                              p_id text default null, p_secret text default null) returns jsonb
+language plpgsql security definer
+set search_path = public, extensions as $$
+declare
+  v_now bigint := tl_now();
+  pl players;
+  here text := tl_auth(p_id, p_secret);
+  v_id text;
+begin
+  if coalesce(p_steam_id, '') !~ '^7656119[0-9]{10}$' then return jsonb_build_object('error', 'That is not a Steam account'); end if;
+  delete from openid_nonces where used < v_now - 86400;
+  insert into openid_nonces (nonce, used) values (left(coalesce(p_nonce, ''), 300), v_now) on conflict do nothing;
+  if not found then return jsonb_build_object('error', 'This sign-in was already used. Try again.'); end if;
+
+  -- this Steam account already has a Trophyline profile: log in to it
+  select * into pl from players where steam_id = p_steam_id;
+  if pl.id is not null then
+    if pl.banned then return jsonb_build_object('error', 'This account was banned'); end if;
+    update players set fail_count = 0 where id = pl.id;
+    return tl_session(pl.id) || jsonb_build_object('steam_id', p_steam_id);
+  end if;
+
+  -- the profile on this computer, from before Steam login, becomes this Steam account's profile
+  if here is not null and (select steam_id from players where id = here) is null then
+    delete from steam_games where player = here;
+    delete from steam_unlocks where player = here;
+    delete from season_scores where player = here;
+    delete from season_hours where player = here;
+    update players set steam_id = p_steam_id, verified_at = 0, v_state = '', v_partial = false, v_next = 0,
+                       flags = '', approve = false, cleared_at = 0
+    where id = here;
+    return tl_session(here) || jsonb_build_object('steam_id', p_steam_id);
+  end if;
+
+  -- a new profile
+  v_id := replace(gen_random_uuid()::text, '-', '');
+  insert into players (id, secret_hash, name, steam_id, created, updated)
+  values (v_id, '', coalesce(nullif(tl_clean(p_name, 24), ''), 'Player'), p_steam_id, v_now, v_now - 60);
+  return tl_session(v_id) || jsonb_build_object('steam_id', p_steam_id, 'new', true);
+end $$;
+
+-- a name code for a Steam account (valid 15 minutes)
+create or replace function tl_srv_code_start(p_steam_id text) returns jsonb language plpgsql security definer
+set search_path = public, extensions as $$
+declare
+  v_now bigint := tl_now();
+  v_id text := tl_token();
+  v_code text := 'TL' || upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 5));
+begin
+  if coalesce(p_steam_id, '') !~ '^7656119[0-9]{10}$' then return jsonb_build_object('error', 'That is not a Steam account'); end if;
+  delete from login_codes where created < v_now - 900;
+  if (select count(*) from login_codes where steam_id = p_steam_id) >= 5 then
+    return jsonb_build_object('error', 'Too many codes for this account. Wait 15 minutes and try again.');
+  end if;
+  if (select count(*) from login_codes) >= 500 then
+    return jsonb_build_object('error', 'Too many people are logging in right now. Try again in a few minutes.');
+  end if;
+  insert into login_codes (id, steam_id, code, created) values (v_id, p_steam_id, v_code, v_now);
+  return jsonb_build_object('ok', true, 'challenge', v_id, 'code', v_code, 'expires', v_now + 900);
+end $$;
+
+create or replace function tl_srv_code_get(p_challenge text) returns jsonb language plpgsql security definer
+set search_path = public, extensions as $$
+declare
+  c login_codes;
+begin
+  select * into c from login_codes where id = p_challenge and created >= tl_now() - 900;
+  if c.id is null then return jsonb_build_object('error', 'This code expired. Start again.'); end if;
+  return jsonb_build_object('ok', true, 'steam_id', c.steam_id, 'code', c.code);
+end $$;
+
+create or replace function tl_srv_code_done(p_challenge text) returns jsonb language sql security definer
+set search_path = public, extensions as $$
+  delete from login_codes where id = p_challenge returning jsonb_build_object('ok', true)
+$$;
+
 -- ---------- reports ----------
 
 create or replace function tl_report(p_id text, p_secret text, p_target text, p_reason text) returns jsonb
@@ -1014,5 +1111,6 @@ grant execute on function
 to anon, authenticated;
 -- only the server function (service role) may store Steam results
 grant execute on function tl_srv_begin(text, text), tl_srv_link(text, text, text, text), tl_srv_apply(text, jsonb),
-  tl_srv_profile(text, jsonb), tl_srv_code(text, text)
+  tl_srv_profile(text, jsonb), tl_srv_code(text, text),
+  tl_srv_steam_login(text, text, text, text, text), tl_srv_code_start(text), tl_srv_code_get(text), tl_srv_code_done(text)
 to service_role;

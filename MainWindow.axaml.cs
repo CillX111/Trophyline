@@ -75,7 +75,6 @@ public partial class MainWindow : Window
         foreach (var (rb, key) in new[] { (BoardSeason, "season"), (BoardXp, "xp"), (BoardPerfect, "perfect"), (BoardOver75, "over75") })
             rb.IsCheckedChanged += async (_, _) => { if (rb.IsChecked == true) { board = key; await LoadLeaderboard(); } };
         SeasonPick.SelectionChanged += async (_, _) => { if (!fillingSeasons) await LoadLeaderboard(); };
-        PassBox.KeyDown += (_, e) => { if (e.Key == Key.Enter) { e.Handled = true; Login_Click(null, new RoutedEventArgs()); } };
         NavLevel.IsCheckedChanged += (_, _) => { if (NavLevel.IsChecked == true && !syncingNav) { ShowPage(LevelPage); AnimateLevelBar(); } };
         NavPlaytime.IsCheckedChanged += (_, _) => { if (NavPlaytime.IsChecked == true && !syncingNav) { BuildPlaytime(); ShowPage(PlaytimePage); } };
         nowTimer.Tick += (_, _) => { if (PlaytimePage.IsVisible) UpdateNowPlaying(); };
@@ -1023,47 +1022,141 @@ public partial class MainWindow : Window
         if (OnlineStatus != null)
             OnlineStatus.Text = err == null
                 ? (Online.Enabled ? $"You're on the leaderboards as \"{Program.Settings().OnlineName}\"." : OnlineStatus.Text)
-                : "Couldn't reach the server: " + err;
+                : err;
     }
 
     void Join_Click(object? sender, RoutedEventArgs e)
     {
-        NavSettings.IsChecked = true; // the account form is there
-        UserBox.Focus();
+        NavSettings.IsChecked = true; // the login is there
+        SteamLoginButton.Focus();
     }
 
     async Task SnapshotAccount(string? arg)
     {
+        // dev check: "login" / "code" (waits for the code to show up in the fake Steam name) / "verify" / "logout" / "status"
         var p = (arg ?? "").Split(',');
         _ = Task.Delay(1500).ContinueWith(_ => Dispatcher.UIThread.Post(() => ((ScrollViewer)SettingsPage).Offset = new Vector(0, 700)));
-        if (p[0] == "logout") { Logout_Click(null, new RoutedEventArgs()); return; }
-        if (p[0] == "link") { LinkSteam_Click(null, new RoutedEventArgs()); return; }
-        if (p[0] == "code") { await Task.Delay(800); SteamCode_Click(null, new RoutedEventArgs()); return; }
-        if (p[0] == "verify") { VerifyNow_Click(null, new RoutedEventArgs()); return; }
-        if (p[0] == "status") return;
-        if (p.Length < 3) return;
-        UserBox.Text = p[1];
-        PassBox.Text = p[2];
-        if (p[0] == "register") Register_Click(null, new RoutedEventArgs()); else Login_Click(null, new RoutedEventArgs());
-        await Task.CompletedTask;
+        switch (p[0])
+        {
+            case "logout": Logout_Click(null, new RoutedEventArgs()); break;
+            case "login": SteamLogin_Click(null, new RoutedEventArgs()); break;
+            case "verify": VerifyNow_Click(null, new RoutedEventArgs()); break;
+            case "code":
+                CodeLogin_Click(null, new RoutedEventArgs());
+                for (int i = 0; i < 40 && (!Online.LoggedIn || Online.NeedsLogin); i++)
+                {
+                    await Task.Delay(1500);
+                    if (codeChallenge != null) await CodeCheck();
+                }
+                break;
+        }
     }
 
-    // ----- account: create, log in, log out -----
+    // ----- account: log in with Steam, log out -----
 
     void ShowAccountState()
     {
         bool loggedIn = Online.LoggedIn, legacy = Online.NeedsLogin;
         LoggedOutPanel.IsVisible = !loggedIn || legacy;
         LoggedInPanel.IsVisible = loggedIn && !legacy;
-        LoginButton.IsVisible = !legacy;
         AccountIntro.Text = legacy
-            ? "Your profile was made before accounts existed. Give it a username and password to keep it (and to log in on other computers)."
-            : "Create an account or log in";
-        RegisterText.Text = legacy ? "Save login for my profile" : "Create account";
-        LoggedInAs.Text = $"Logged in as {Online.Username}";
-        if (legacy && string.IsNullOrEmpty(UserBox.Text))
-            UserBox.Text = new string(Program.Settings().OnlineName.Where(c => char.IsAsciiLetterOrDigit(c) || c == '_').Take(20).ToArray());
+            ? "Trophyline accounts are Steam accounts now. Log in with Steam once to keep your profile, your places and your picture."
+            : "Log in with your Steam account";
+        var cfg = Program.Settings();
+        var who = SteamAccounts.List().FirstOrDefault(a => a.Id64 == cfg.VerifiedSteam);
+        LoggedInAs.Text = $"Logged in with Steam as {cfg.OnlineName}" + (who != null && who.Display != cfg.OnlineName ? $"  (Steam account {who.Display})" : "");
         if (loggedIn && !legacy) _ = ShowVerifyState();
+        // an old profile, or one that logged in with Steam on another computer: ask the server
+        else if (legacy && !checkedLegacy)
+        {
+            checkedLegacy = true;
+            _ = Online.VerifyStatus().ContinueWith(_ => Dispatcher.UIThread.Post(() => { if (!Online.NeedsLogin) ShowAccountState(); }));
+        }
+    }
+    bool checkedLegacy;
+
+    void AccountNote(string? text, bool good = false)
+    {
+        AccountMsg.IsVisible = !string.IsNullOrEmpty(text);
+        AccountMsg.Text = text ?? "";
+        AccountMsg.Foreground = good ? Fmt.Green : Fmt.Orange;
+    }
+
+    /// After logging in: show it, upload, and have the server read your achievements from Steam.
+    async Task AfterLogin(string? err)
+    {
+        if (err != null) { AccountNote(err); return; }
+        CodePanel.IsVisible = false;
+        codeChallenge = null;
+        AccountNote("You're logged in with Steam. Reading your achievements from Steam…", good: true);
+        seasonIds.Clear();
+        BuildSettings();
+        await UploadNow(); // this also starts the first check with Steam
+        if (Program.Settings().LastVerify == 0) await RunVerify();
+        else { VerifyNote(null); await ShowVerifyState(); }
+        AccountNote(null);
+    }
+
+    CancellationTokenSource? loginCancel;
+
+    async void SteamLogin_Click(object? sender, RoutedEventArgs e)
+    {
+        loginCancel?.Cancel();
+        loginCancel = new CancellationTokenSource();
+        AccountNote("Steam's login page opened in your browser. Log in there, then come back here.", good: true);
+        await AfterLogin(await Online.LoginWithSteam(loginCancel.Token));
+    }
+
+    // ----- name code: for networks that block Steam's login page -----
+
+    string? codeChallenge;
+    string codeValue = "";
+
+    async void CodeLogin_Click(object? sender, RoutedEventArgs e)
+    {
+        loginCancel?.Cancel();
+        var acc = SteamAccounts.Current();
+        if (acc == null) { AccountNote("Trophyline can't find a Steam account on this computer. Log in to Steam first."); return; }
+        AccountNote("Getting a code…", good: true);
+        var (code, challenge, err) = await Online.StartCode(acc.Id64);
+        if (err != null || code == null || challenge == null) { AccountNote(err ?? "The server gave an unexpected answer."); return; }
+        codeChallenge = challenge;
+        codeValue = code;
+        CodeAccount.Text = $"Log in as the Steam account {acc.Display}. Your code:";
+        CodeText.Text = code;
+        CopyCodeText.Text = "Copy";
+        CodePanel.IsVisible = true;
+        AccountNote(null);
+        if (Environment.GetEnvironmentVariable("TROPHYLINE_NO_BROWSER") == "1") // dev check: the test reads the code from here
+            File.WriteAllText(System.IO.Path.Combine(Program.Home, "login-code.txt"), code);
+    }
+
+    async void CopyCode_Click(object? sender, RoutedEventArgs e)
+    {
+        if (Clipboard == null || codeValue.Length == 0) return;
+        await Clipboard.SetTextAsync(codeValue);
+        CopyCodeText.Text = "Copied";
+    }
+
+    async void CodeCheck_Click(object? sender, RoutedEventArgs e) => await CodeCheck();
+
+    async Task CodeCheck()
+    {
+        if (codeChallenge == null) return;
+        CodeCheckButton.IsEnabled = false;
+        AccountNote("Asking Steam for your profile name…", good: true);
+        var err = await Online.FinishCode(codeChallenge);
+        CodeCheckButton.IsEnabled = true;
+        if (err != null && err.Contains("expired")) { CodePanel.IsVisible = false; codeChallenge = null; }
+        await AfterLogin(err);
+        if (err == null) AccountNote("You're logged in. You can change your Steam profile name back now.", good: true);
+    }
+
+    void CodeCancel_Click(object? sender, RoutedEventArgs e)
+    {
+        CodePanel.IsVisible = false;
+        codeChallenge = null;
+        AccountNote(null);
     }
 
     // ----- Steam-verified scores -----
@@ -1085,25 +1178,12 @@ public partial class MainWindow : Window
             VerifyText.Text = "Couldn't reach the server to see your Steam check right now.";
             return;
         }
-        bool linked = st["linked"]?.GetValue<bool>() == true;
         bool ranked = st["ranked"]?.GetValue<bool>() == true;
         bool flagged = st["flagged"]?.GetValue<bool>() == true;
         bool partial = st["partial"]?.GetValue<bool>() == true;
         var state = S(st["state"]);
         long at = L(st["verified_at"]);
-        LinkSteamText.Text = linked ? "Link a different Steam account" : "Link Steam account";
-        LinkSteamButton.Classes.Set("primary", !linked);
-        LinkSteamButton.Classes.Set("pill", linked);
-        LinkSteamText.Margin = linked ? new Thickness(0) : new Thickness(0, 9);
-        VerifyButton.IsVisible = linked;
-        SteamCodeButton.IsVisible = !linked;
         VerifyTitle.Foreground = ranked ? Fmt.Green : flagged || state == "private" ? Fmt.Orange : Res("Text");
-        if (!linked)
-        {
-            VerifyTitle.Text = "Steam-verified scores: not linked yet";
-            VerifyText.Text = "Only Steam-verified players are ranked on the leaderboards. Link your Steam account and the Trophyline server reads your achievements from Steam itself, so nobody can fake them.";
-            return;
-        }
         if (state == "private")
         {
             VerifyTitle.Text = "Steam doesn't share your achievements";
@@ -1116,7 +1196,7 @@ public partial class MainWindow : Window
         }
         else if (at == 0)
         {
-            VerifyTitle.Text = "Linked, not checked yet";
+            VerifyTitle.Text = "Not checked yet";
             VerifyText.Text = partial ? "Part of your library is checked. Press Check now to finish." : "Press Check now to read your achievements from Steam.";
         }
         else
@@ -1128,54 +1208,6 @@ public partial class MainWindow : Window
         }
     }
 
-    CancellationTokenSource? linkCancel;
-
-    async void LinkSteam_Click(object? sender, RoutedEventArgs e)
-    {
-        linkCancel?.Cancel();
-        linkCancel = new CancellationTokenSource();
-        VerifyNote("Steam's login page opened in your browser. Sign in there, then come back here.", good: true);
-        var err = await Online.LinkSteam(linkCancel.Token);
-        if (err != null) { VerifyNote(err); return; }
-        VerifyNote("Linked. Reading your achievements from Steam…", good: true);
-        await RunVerify();
-    }
-
-    /// Linking with a name code: works on networks that block Steam's login page.
-    async void SteamCode_Click(object? sender, RoutedEventArgs e)
-    {
-        linkCancel?.Cancel();
-        var cts = linkCancel = new CancellationTokenSource();
-        var acc = SteamAccounts.Current();
-        if (acc == null) { VerifyNote("No Steam account found on this computer. Sign in to Steam on this PC once, then try again."); return; }
-        var (code, err) = await Online.StartSteamCode(acc.Id64);
-        if (err != null || code == null) { VerifyNote(err ?? "Couldn't get a code."); return; }
-        string Steps(string extra) =>
-            $"Put  {code}  anywhere in the Steam profile name of {acc.Display} (in Steam: Friends list → click your name → Change Profile Name, "
-            + $"or your profile → Edit Profile). Trophyline looks every 15 seconds; once it says linked, change your name back. The code works for 20 minutes.{extra}";
-        VerifyNote(Steps(""), good: true);
-        SteamCodeButton.IsEnabled = LinkSteamButton.IsEnabled = false;
-        try
-        {
-            var until = DateTime.UtcNow.AddMinutes(20);
-            while (!cts.IsCancellationRequested && DateTime.UtcNow < until)
-            {
-                try { await Task.Delay(15000, cts.Token); } catch (OperationCanceledException) { return; }
-                var (linked, problem) = await Online.CheckSteamCode();
-                if (linked)
-                {
-                    VerifyNote("Linked! You can change your Steam profile name back now. Reading your achievements from Steam…", good: true);
-                    await RunVerify();
-                    return;
-                }
-                if (problem != null && problem.Contains("ran out")) { VerifyNote(problem); return; }
-                VerifyNote(Steps(problem != null ? $"\n\n(Last look: {problem})" : $"\n\nNot there yet ({DateTime.Now:HH:mm:ss})."), good: problem == null);
-            }
-            if (!cts.IsCancellationRequested) VerifyNote("The code ran out. Press \"Use a name code instead\" for a new one.");
-        }
-        finally { SteamCodeButton.IsEnabled = LinkSteamButton.IsEnabled = true; }
-    }
-
     async void VerifyNow_Click(object? sender, RoutedEventArgs e)
     {
         VerifyNote("Asking Steam…", good: true);
@@ -1184,64 +1216,23 @@ public partial class MainWindow : Window
 
     async Task RunVerify()
     {
-        VerifyButton.IsEnabled = LinkSteamButton.IsEnabled = false;
+        VerifyButton.IsEnabled = false;
         var (r, err) = await Online.Verify(msg => Dispatcher.UIThread.Post(() => VerifyNote(msg, good: true)));
-        VerifyButton.IsEnabled = LinkSteamButton.IsEnabled = true;
-        if (err != null) VerifyNote(err);
+        VerifyButton.IsEnabled = true;
+        if (err != null && err.StartsWith("Checked a moment ago")) VerifyNote(null); // just checked: nothing new to read
+        else if (err != null) VerifyNote(err);
         else if (S(r?["state"]) == "private") VerifyNote("Steam says your game details are private.");
         else VerifyNote(r?["flagged"]?.GetValue<bool>() == true ? "Checked. Something looked unusual, so your scores are paused for a check." : "Checked with Steam.", good: r?["flagged"]?.GetValue<bool>() != true);
         seasonIds.Clear();
         await ShowVerifyState();
     }
 
-    void AccountNote(string? text, bool good = false)
-    {
-        AccountMsg.IsVisible = !string.IsNullOrEmpty(text);
-        AccountMsg.Text = text ?? "";
-        AccountMsg.Foreground = good ? Fmt.Green : Fmt.Orange;
-    }
-
-    async Task FinishLogin(string? err, string doneText)
-    {
-        if (err != null) { AccountNote(err); return; }
-        PassBox.Text = "";
-        AccountNote(doneText, good: true);
-        seasonIds.Clear();
-        BuildSettings();
-        await UploadNow();
-    }
-
-    async void Login_Click(object? sender, RoutedEventArgs e)
-    {
-        if (string.IsNullOrWhiteSpace(UserBox.Text) || string.IsNullOrEmpty(PassBox.Text)) { AccountNote("Type your username and password."); return; }
-        AccountNote("Logging in…", good: true);
-        await FinishLogin(await Online.Login(UserBox.Text!, PassBox.Text!), "You're logged in.");
-    }
-
-    async void Register_Click(object? sender, RoutedEventArgs e)
-    {
-        if (string.IsNullOrWhiteSpace(UserBox.Text) || string.IsNullOrEmpty(PassBox.Text)) { AccountNote("Pick a username and a password."); return; }
-        AccountNote("One moment…", good: true);
-        bool legacy = Online.NeedsLogin;
-        var err = legacy ? await Online.Claim(UserBox.Text!, PassBox.Text!) : await Online.Register(UserBox.Text!, PassBox.Text!);
-        await FinishLogin(err, legacy ? "Done. Your profile now has a login." : "Account created. You're on the leaderboards now.");
-    }
-
     async void Logout_Click(object? sender, RoutedEventArgs e)
     {
         await Online.Logout();
-        AccountNote("Logged out. Your account and your place on the leaderboards are still there.", good: true);
+        AccountNote("Logged out. Your account and your place on the leaderboards are still there: log in with the same Steam account to get back.", good: true);
         seasonIds.Clear();
         BuildSettings();
-    }
-
-    async void ChangePassword_Click(object? sender, RoutedEventArgs e)
-    {
-        if (string.IsNullOrEmpty(OldPassBox.Text) || string.IsNullOrEmpty(NewPassBox.Text)) { AccountNote("Type your current and your new password."); return; }
-        var err = await Online.ChangePassword(OldPassBox.Text!, NewPassBox.Text!);
-        if (err != null) { AccountNote(err); return; }
-        OldPassBox.Text = NewPassBox.Text = "";
-        AccountNote("Password changed. Other computers were logged out.", good: true);
     }
 
     async void SaveOnlineName_Click(object? sender, RoutedEventArgs e)
@@ -2123,7 +2114,7 @@ public partial class MainWindow : Window
             ChatInput.IsEnabled = canWrite;
             ChatInput.Watermark = !Online.Available ? "Chat needs the Trophyline server, which isn't set up yet."
                 : canWrite ? (chatWith == null ? "Write to everyone…" : $"Write to {chatWithName}…")
-                : "Join the leaderboards (Leaderboards page) to write messages.";
+                : "Log in with Steam (Settings) to write messages.";
             if (!Online.Available) { ChatTitle.Text = "Lobby"; ChatTitleSub.Text = "offline"; return; }
 
             ChatTitle.Text = chatWith == null ? "Lobby" : chatWithName;

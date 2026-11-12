@@ -5,7 +5,7 @@ tiny background tracker that keeps a dated journal of every achievement you unlo
 
 ## Download
 
-Get **`Trophyline.exe`** from the [latest release](https://github.com/CillX1/Trophyline/releases/latest)
+Get **`Trophyline.exe`** from the [latest release](https://github.com/CillX111/Trophyline/releases/latest)
 and double-click it. Windows 10/11 (64-bit); no install and no .NET needed.
 
 To start the tracker with Windows and add Trophyline to the Start menu, run it once with:

@@ -50,7 +50,7 @@ The files aren't signed by Microsoft or Apple, so the first launch shows a warni
   the Level page shows ranks (Rookie → Explorer → Hunter → Veteran → Elite → Master →
   Legend), where your XP comes from and recent gains. Pop-ups show the XP you earned
   and a "Level up!" card when you reach a new level
-- **Leaderboards** (online, opt-in): Season XP, Highest XP, Most completed games and
+- **Leaderboards** (online, with a free Trophyline account): Season XP, Highest XP, Most completed games and
   Most games over 75%, plus every season's champions. Click anyone to see their
   profile: level, rank, places, best games and latest unlocks
 - **Seasons**: each lasts 3 months (Season 1 = Autumn 2026, October–December);
@@ -77,13 +77,20 @@ The files aren't signed by Microsoft or Apple, so the first launch shows a warni
 
 ## How it works
 
-- **Online is off until you join** (Leaderboards page or Settings). Then Trophyline shares
-  your chosen name, level, XP, season XP, game counts, equipped icon, top games, latest
-  unlocks and the chat messages you write. Never your Steam login. Leaving deletes all of
-  it from the server. The server is a Supabase project set up by
-  [`supabase/trophyline.sql`](supabase/trophyline.sql): the tables can't be read directly,
-  only through its `tl_*` functions, and every change needs the secret that only your own
-  Trophyline knows. Scores are worked out on each player's computer, so they're on trust.
+- **Online needs a Trophyline account** (Settings → Trophyline account): pick a username
+  (3–20 letters, numbers or `_`) and a password (8+ characters). Log in with it on any
+  computer; Log out keeps your account and places. Passwords are stored only as a salted
+  hash, 5 wrong tries lock the account for 5 minutes, and there's no email, so a lost
+  password can't be reset. Profiles made before 1.7.0 get a username and password once.
+  Online, Trophyline shares your chosen name, level, XP, season XP, game counts, equipped
+  icon, top games, latest unlocks and the chat messages you write. Never your Steam login.
+  Delete account removes all of it from the server. The server is a Supabase project set
+  up by [`supabase/trophyline.sql`](supabase/trophyline.sql): the tables can't be read
+  directly, only through its `tl_*` functions, and every change needs your login.
+- **Scores are on trust**: they're worked out from the Steam files on each player's
+  computer, so an account doesn't stop someone editing those files. The server owner can
+  ban a player (Supabase → Table Editor → `players` → tick `banned`): they disappear from
+  leaderboards, profiles and chat and can't log in or upload.
 - Reads the files Steam already keeps on your computer: achievements
   (`appcache/stats`), playtime (`userdata/…/localconfig.vdf`), installed games and the
   artwork Steam downloaded. No Steam API key or public profile needed.

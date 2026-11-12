@@ -99,7 +99,7 @@ public sealed class PopupWindow : Window
         ShowInTaskbar = false;
         CanResize = false;
         SizeToContent = SizeToContent.WidthAndHeight;
-        Title = "Trophyline";
+        Title = "Trophyline pop-up"; // tiling window managers (Hyprland, Sway…) can match this to float it
 
         var stack = new StackPanel { Spacing = 10, Margin = new Thickness(16) };
         foreach (var it in items.Take(3)) stack.Children.Add(Card(it));

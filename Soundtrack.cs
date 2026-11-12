@@ -159,8 +159,17 @@ sealed class GameMonitor : IDisposable
     string? RegistryVdf()
     {
         var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-        var linux = Path.Combine(home, ".steam", "registry.vdf");
-        if (Platform.Linux && File.Exists(linux)) return linux;
+        if (Platform.Linux)
+        {
+            // normal Steam, Flatpak Steam, Snap Steam
+            string[] candidates =
+            [
+                Path.Combine(home, ".steam", "registry.vdf"),
+                Path.Combine(home, ".var", "app", "com.valvesoftware.Steam", ".steam", "registry.vdf"),
+                Path.Combine(home, "snap", "steam", "common", ".steam", "registry.vdf"),
+            ];
+            if (candidates.FirstOrDefault(File.Exists) is string found) return found;
+        }
         return steamFolder != null ? Path.Combine(steamFolder, "registry.vdf") : null;
     }
 

@@ -1,0 +1,26 @@
+# Pings the Trophyline server once a day so the free Supabase project never pauses
+# (Supabase pauses free projects after about a week without activity).
+name: keep server awake
+
+on:
+  schedule:
+    - cron: "17 6 * * *"   # every day at 06:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ask the server for its status
+        env:
+          # The publishable key is public by design (it's also inside the app).
+          SERVER: https://cucjgtxcwjddlgisjmew.supabase.co
+          KEY: sb_publishable_HfRFJj2P1YzL9GL8-DhlRQ_CuEVGbWM
+        run: |
+          curl --fail --silent --show-error --max-time 30 \
+            -X POST "$SERVER/rest/v1/rpc/tl_status" \
+            -H "apikey: $KEY" -H "Authorization: Bearer $KEY" \
+            -H "Content-Type: application/json" -d '{}'

@@ -115,6 +115,23 @@ Data folder: `%LOCALAPPDATA%\Trophyline` (Windows), `~/Library/Application Suppo
   `pauseSoundtrackOnQuit`, `unlockPopups`, and optional `steamFolder` / `statsFolder`
   if Steam is somewhere unusual
 
+## Linux with Hyprland (Omarchy) and other tiling desktops
+
+Trophyline runs through XWayland. Two optional tweaks:
+
+- **Pop-ups float in the corner instead of being tiled:** the pop-up window is titled
+  `Trophyline pop-up`. Add a rule to `~/.config/hypr/hyprland.conf` (syntax for
+  Hyprland 0.48+; older versions use `windowrulev2 = float, title:...`):
+  ```
+  windowrule = float, pin, noinitialfocus, move 100%-420 100%-160, title:^(Trophyline pop-up)$
+  ```
+  On Sway: `for_window [title="^Trophyline pop-up$"] floating enable, sticky enable, move position 100 ppt -420 px 100 ppt -160 px`
+- **Tracker at login:** `Trophyline --install` adds an XDG autostart entry. If your session
+  doesn't run those, add `exec-once = /path/to/Trophyline --background` to
+  `~/.config/hypr/autostart.conf` (Omarchy) or `hyprland.conf`.
+
+Session tracking and game soundtracks work with normal, Flatpak and Snap Steam.
+
 ## Build
 
 Needs the .NET 10 SDK. The window uses [Avalonia](https://avaloniaui.net/).

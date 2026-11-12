@@ -80,7 +80,13 @@ create or replace function tl_int(v text, max_value bigint) returns bigint langu
 $$;
 
 create or replace function tl_clean(v text, max_len int) returns text language sql immutable as $$
-  select left(btrim(regexp_replace(coalesce(v, ''), '[\u0000-\u0009\u000b-\u001f\u007f-\u009f​-‏‪-‮]', '', 'g')), max_len)
+  -- removes control characters (keeps line breaks) and invisible / text-direction characters
+  select left(btrim(translate(
+    regexp_replace(coalesce(v, ''), '[\x01-\x09\x0b-\x1f\x7f]', '', 'g'),
+    (select string_agg(chr(c), '') from generate_series(128, 159) c)
+      || chr(8203) || chr(8204) || chr(8205) || chr(8206) || chr(8207)
+      || chr(8234) || chr(8235) || chr(8236) || chr(8237) || chr(8238) || chr(65279),
+    '')), max_len)
 $$;
 
 create or replace function tl_hash(secret text) returns text language sql immutable

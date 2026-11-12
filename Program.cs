@@ -295,6 +295,10 @@ public sealed class Config
     /// Leave empty to use the public Trophyline server (a Supabase project URL and its publishable key).
     public string Server { get; set; } = "";
     public string ServerKey { get; set; } = "";
+    /// Usernames shown on your online profile, e.g. { "discord": "name", "instagram": "name" }.
+    public Dictionary<string, string> Links { get; set; } = new();
+    /// Fingerprint of the profile picture last uploaded (so it's only sent when it changes).
+    public string AvatarHash { get; set; } = "";
     /// Accent colour of the window, e.g. "#66C0F4".
     public string Accent { get; set; } = Palette.Default;
 }

@@ -118,6 +118,7 @@
                                 <Ellipse Fill="{DynamicResource AccentAvatar}"/>
                                 <TextBlock x:Name="AvatarLetter" HorizontalAlignment="Center" VerticalAlignment="Center"
                                            FontWeight="Bold" FontSize="17" Foreground="White"/>
+                                <Ellipse x:Name="SidePic" IsVisible="False"/>
                                 <!-- level badge on the avatar -->
                                 <Border x:Name="LevelBadge" MinWidth="22" Height="20" CornerRadius="10" Padding="5,0"
                                         HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,-8,-5"
@@ -869,6 +870,26 @@
                                 </Button>
                             </Grid>
                             <TextBlock x:Name="OnlineStatus" Classes="muted" FontSize="12" TextWrapping="Wrap"/>
+                            <TextBlock Text="Profile picture" FontWeight="SemiBold" Margin="0,8,0,0"/>
+                            <StackPanel Orientation="Horizontal" Spacing="16">
+                                <Panel x:Name="MyPicturePreview" VerticalAlignment="Center"/>
+                                <StackPanel VerticalAlignment="Center" Spacing="8">
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <Button Classes="pill" Click="ChoosePicture_Click"><TextBlock Text="Choose picture…"/></Button>
+                                        <Button x:Name="RemovePictureButton" Classes="pill" Click="RemovePicture_Click"><TextBlock Text="Remove"/></Button>
+                                    </StackPanel>
+                                    <TextBlock x:Name="PictureStatus" Classes="muted" FontSize="12" TextWrapping="Wrap" MaxWidth="460"
+                                               Text="Any PNG or JPG. It's cropped to a square and made small (128 × 128). It replaces your shop icon while it's set."/>
+                                </StackPanel>
+                            </StackPanel>
+                            <TextBlock Text="Profile links" FontWeight="SemiBold" Margin="0,8,0,0"/>
+                            <TextBlock Classes="muted" FontSize="12" TextWrapping="Wrap"
+                                       Text="Optional. Anyone who opens your profile sees these and can click them. Type just your username (or paste your profile link). Leave empty to hide."/>
+                            <WrapPanel x:Name="LinkBoxes"/>
+                            <StackPanel Orientation="Horizontal" Spacing="12">
+                                <Button Classes="pill" Click="SaveLinks_Click"><TextBlock Text="Save links"/></Button>
+                                <TextBlock x:Name="LinksStatus" Classes="muted" FontSize="12" VerticalAlignment="Center" TextWrapping="Wrap"/>
+                            </StackPanel>
                         </StackPanel>
                     </Border>
 

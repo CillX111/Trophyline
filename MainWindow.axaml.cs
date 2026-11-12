@@ -8,6 +8,8 @@ using Avalonia.Input;
 using Avalonia.Interactivity;
 using Avalonia.Layout;
 using Avalonia.Media;
+using Avalonia.Media.Imaging;
+using Avalonia.Platform.Storage;
 using Avalonia.Styling;
 using Avalonia.Threading;
 
@@ -784,6 +786,8 @@ public partial class MainWindow : Window
             OnlineSwitch.IsChecked = cfg.OnlineEnabled;
             OnlineSwitch.IsEnabled = Online.Available;
             OnlineNameBox.Text = cfg.OnlineName.Length > 0 ? cfg.OnlineName : data?.PersonaName ?? "";
+            BuildLinkBoxes();
+            ShowMyPicture();
             OnlineStatus.Text = !Online.Available ? "The Trophyline server isn't set up yet, so this can't be turned on."
                 : cfg.OnlineEnabled ? $"You're on the leaderboards as \"{cfg.OnlineName}\"." : "You're not on the leaderboards.";
             int n = SoundtrackStore.Load().Count;
@@ -1014,6 +1018,7 @@ public partial class MainWindow : Window
     {
         if (data == null || xp == null) return;
         var err = await Online.Upload(data.Games, xp, force);
+        if (err == null && Online.Enabled) await SyncPicture();
         if (OnlineStatus != null)
             OnlineStatus.Text = err == null
                 ? (Online.Enabled ? $"You're on the leaderboards as \"{Program.Settings().OnlineName}\"." : OnlineStatus.Text)
@@ -1114,12 +1119,12 @@ public partial class MainWindow : Window
         var me = Online.MyId;
         LbRows.Children.Clear();
         foreach (var r in rows)
-            LbRows.Children.Add(LeaderRow((int)L(r?["pos"]), S(r?["id"]), S(r?["name"]), (int)L(r?["level"]), S(r?["rank"]), S(r?["icon"]), L(r?["value"]), S(r?["id"]) == me));
+            LbRows.Children.Add(LeaderRow((int)L(r?["pos"]), S(r?["id"]), S(r?["name"]), (int)L(r?["level"]), S(r?["rank"]), S(r?["icon"]), L(r?["value"]), S(r?["id"]) == me, L(r?["avatar"])));
         if (res["me"] is JsonNode mine && !rows.Any(r => S(r?["id"]) == me))
         {
             LbRows.Children.Add(new TextBlock { Text = "…", Foreground = Res("Muted"), HorizontalAlignment = HorizontalAlignment.Center });
             LbRows.Children.Add(LeaderRow((int)L(mine["pos"]), me, Program.Settings().OnlineName, xp?.Level ?? 1, Xp.RankFor(xp?.Level ?? 1).Title,
-                                          Shop.Load().Equipped, L(mine["value"]), true));
+                                          Shop.Load().Equipped, L(mine["value"]), true, 1));
         }
         if (board == "season" && (seasonId == null || seasonId == season.Id))
             MySeasonPlace.Text = res["me"] is JsonNode m2 ? $"#{L(m2["pos"])} this season" : Online.Enabled ? "earn XP to get on the board" : "not on the leaderboards";
@@ -1151,7 +1156,7 @@ public partial class MainWindow : Window
         }
     }
 
-    Control LeaderRow(int pos, string id, string name, int level, string rank, string icon, long value, bool isMe)
+    Control LeaderRow(int pos, string id, string name, int level, string rank, string icon, long value, bool isMe, long pictureVer = 0)
     {
         string[] medals = ["#F5C451", "#C9D6E3", "#D08A5B"];
         var posText = new TextBlock
@@ -1166,7 +1171,7 @@ public partial class MainWindow : Window
         who.Children.Add(new TextBlock { Text = $"Level {level}  ·  {rank}", FontSize = 12, Foreground = Fmt.Brush(rankColor) });
         var val = new TextBlock { Text = BoardValue(value), FontSize = 17, FontWeight = FontWeight.SemiBold, VerticalAlignment = VerticalAlignment.Center };
         var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,Auto,*,Auto") };
-        var avatar = Avatar(icon, name, 42, Fmt.Brush(rankColor));
+        var avatar = Avatar(icon, name, 42, Fmt.Brush(rankColor), id, pictureVer);
         Grid.SetColumn(avatar, 1); Grid.SetColumn(who, 2); Grid.SetColumn(val, 3);
         grid.Children.Add(posText); grid.Children.Add(avatar); grid.Children.Add(who); grid.Children.Add(val);
         var card = new Border { Child = grid, Padding = new Thickness(16, 10), CornerRadius = new CornerRadius(12) };
@@ -1178,8 +1183,8 @@ public partial class MainWindow : Window
         return b;
     }
 
-    /// A round profile picture: the equipped shop icon, or the first letter of the name.
-    static Control Avatar(string? iconId, string name, double size, IBrush ring)
+    /// A round profile picture: their uploaded picture, else the equipped shop icon, else the first letter of the name.
+    static Control Avatar(string? iconId, string name, double size, IBrush ring, string? playerId = null, long pictureVer = 0)
     {
         var icon = Shop.Find(iconId);
         Control inner = icon != null
@@ -1189,13 +1194,28 @@ public partial class MainWindow : Window
                 Text = name.Length > 0 ? char.ToUpper(name[0]).ToString() : "?", FontSize = size * 0.42, FontWeight = FontWeight.Bold,
                 Foreground = Brushes.White, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center,
             };
-        return new Border
+        var border = new Border
         {
             Width = size, Height = size, CornerRadius = new CornerRadius(size / 2),
             Background = icon != null ? Fmt.Tint(Fmt.Brush(icon.Color), 0x30) : Res("AccentAvatar"),
             BorderBrush = icon != null ? Fmt.Brush(icon.Color) : ring, BorderThickness = new Thickness(Math.Max(2, size / 22)),
             Child = inner,
         };
+        if (playerId != null)
+        {
+            // the picture replaces the icon once it's loaded (cached after the first time)
+            Avatars.Get(playerId, pictureVer).ContinueWith(t =>
+            {
+                if (t.Result is Bitmap bmp)
+                    Dispatcher.UIThread.Post(() =>
+                    {
+                        border.Child = null;
+                        border.Background = new ImageBrush(bmp) { Stretch = Stretch.UniformToFill };
+                        border.BorderBrush = ring;
+                    });
+            });
+        }
+        return border;
     }
 
     void UpdateAvatar()
@@ -1204,6 +1224,58 @@ public partial class MainWindow : Window
         var name = data?.PersonaName ?? "?";
         AvatarLetter.Text = icon?.Glyph ?? (name.Length > 0 ? char.ToUpper(name[0]).ToString() : "?");
         AvatarLetter.FontSize = icon != null ? 21 : 17;
+        var pic = Avatars.Mine();
+        SidePic.IsVisible = pic != null;
+        SidePic.Fill = pic != null ? new ImageBrush(pic) { Stretch = Stretch.UniformToFill } : null;
+    }
+
+    // ----- your profile picture (Settings) -----
+
+    void ShowMyPicture()
+    {
+        MyPicturePreview.Children.Clear();
+        MyPicturePreview.Children.Add(Avatar(Shop.Load().Equipped, data?.PersonaName ?? "?", 72, Palette.Brush, Online.MyId.Length > 0 ? Online.MyId : "me", 1));
+        RemovePictureButton.IsVisible = Avatars.HasMine;
+    }
+
+    async void ChoosePicture_Click(object? sender, RoutedEventArgs e)
+    {
+        var files = await StorageProvider.OpenFilePickerAsync(new Avalonia.Platform.Storage.FilePickerOpenOptions
+        {
+            Title = "Choose a profile picture",
+            AllowMultiple = false,
+            FileTypeFilter = [new Avalonia.Platform.Storage.FilePickerFileType("Pictures") { Patterns = ["*.png", "*.jpg", "*.jpeg", "*.webp", "*.bmp", "*.gif"] }],
+        });
+        if (files.Count == 0 || files[0].TryGetLocalPath() is not string path) return;
+        var jpeg = await Task.Run(() => { try { return Avatars.Prepare(path); } catch { return null; } });
+        if (jpeg == null) { PictureStatus.Text = "Couldn't read that picture. Try a PNG or JPG."; return; }
+        Avatars.SaveMine(jpeg);
+        await SyncPicture();
+    }
+
+    async void RemovePicture_Click(object? sender, RoutedEventArgs e)
+    {
+        Avatars.SaveMine(null);
+        await SyncPicture();
+    }
+
+    /// Shows your picture everywhere and uploads it if it changed.
+    async Task SyncPicture()
+    {
+        UpdateAvatar();
+        ShowMyPicture();
+        if (!Online.Enabled) { PictureStatus.Text = Avatars.HasMine ? "Saved. Others see it once you join the leaderboards." : "Removed."; return; }
+        var bytes = Avatars.HasMine ? await File.ReadAllBytesAsync(Avatars.MinePath) : null;
+        var hash = bytes == null ? "" : Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes));
+        var cfg = Program.Settings();
+        if (cfg.AvatarHash == hash) { PictureStatus.Text = ""; return; }
+        PictureStatus.Text = "Uploading…";
+        var err = await Online.SetAvatar(bytes);
+        if (err != null) { PictureStatus.Text = err; return; }
+        cfg = Program.Settings();
+        cfg.AvatarHash = hash;
+        Program.SaveSettings(cfg);
+        PictureStatus.Text = bytes == null ? "Removed from your profile." : "Uploaded: it's on your profile now.";
     }
 
     // ----- someone's profile -----
@@ -1226,7 +1298,7 @@ public partial class MainWindow : Window
 
         // header
         var head = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 22 };
-        head.Children.Add(Avatar(S(prof?["icon"]), name, 96, Fmt.Brush(rankHex)));
+        head.Children.Add(Avatar(S(prof?["icon"]), name, 96, Fmt.Brush(rankHex), id, L(p["avatar"])));
         var ht = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
         ht.Children.Add(new TextBlock { Text = name + (id == Online.MyId ? "  (you)" : ""), FontSize = 32, FontWeight = FontWeight.Bold });
         ht.Children.Add(new TextBlock { Text = $"Level {level}  ·  {rank}", FontSize = 16, FontWeight = FontWeight.SemiBold, Foreground = Fmt.Brush(rankHex) });
@@ -1235,13 +1307,30 @@ public partial class MainWindow : Window
             Text = $"On Trophyline since {Fmt.Local(L(p["created"])):dd.MM.yyyy}  ·  updated {Fmt.Ago(L(p["updated"]))}",
             Foreground = Res("Muted"), FontSize = 13, Margin = new Thickness(0, 4, 0, 0),
         });
+        var actions = new WrapPanel { Margin = new Thickness(0, 10, 0, 0) };
         if (id != Online.MyId)
         {
-            var msg = new Button { Content = new TextBlock { Text = "Message" }, Margin = new Thickness(0, 10, 0, 0), HorizontalAlignment = HorizontalAlignment.Left };
+            var msg = new Button { Content = new TextBlock { Text = "Message" }, Margin = new Thickness(0, 0, 8, 8) };
             msg.Classes.Add("pill");
             msg.Click += async (_, _) => await OpenChat(id, name);
-            ht.Children.Add(msg);
+            actions.Children.Add(msg);
         }
+        // their links (usernames only; the web address is built here, never taken from the server)
+        var links = prof?["links"] as JsonObject;
+        foreach (var n in Social.Networks)
+        {
+            var handle = S(links?[n.Key]);
+            if (handle.Length == 0 || !n.Valid.IsMatch(handle)) continue;
+            actions.Children.Add(LinkChip(n, handle));
+        }
+        if (id == Online.MyId)
+        {
+            var edit = new Button { Content = new TextBlock { Text = "Edit my links" }, Margin = new Thickness(0, 0, 8, 8) };
+            edit.Classes.Add("pill");
+            edit.Click += (_, _) => NavSettings.IsChecked = true;
+            actions.Children.Add(edit);
+        }
+        if (actions.Children.Count > 0) ht.Children.Add(actions);
         head.Children.Add(ht);
         PlayerBody.Children.Add(head);
 
@@ -1321,6 +1410,76 @@ public partial class MainWindow : Window
                 PlayerBody.Children.Add(card);
             }
         }
+    }
+
+    Control LinkChip(SocialNetwork n, string handle)
+    {
+        var color = Fmt.Brush(n.Color);
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        row.Children.Add(new Border { Width = 9, Height = 9, CornerRadius = new CornerRadius(5), Background = color, VerticalAlignment = VerticalAlignment.Center });
+        row.Children.Add(new TextBlock { Text = n.Label, FontWeight = FontWeight.SemiBold });
+        row.Children.Add(new TextBlock { Text = (n.Key == "discord" ? "" : "@") + handle, Foreground = Res("Muted"), MaxWidth = 180, TextTrimming = TextTrimming.CharacterEllipsis });
+        var b = new Button { Content = row, Margin = new Thickness(0, 0, 8, 8) };
+        b.Classes.Add("pill");
+        var url = Social.Url(n, handle);
+        ToolTip.SetTip(b, url ?? "Click to copy the Discord username");
+        b.Click += async (_, _) =>
+        {
+            if (url != null) { try { Platform.OpenUrl(url); } catch (Exception ex) { Program.LogError("open link: " + ex.Message); } return; }
+            if (Clipboard is { } cb) await cb.SetTextAsync(handle);
+            ((TextBlock)row.Children[2]).Text = "copied!";
+            await Task.Delay(1500);
+            ((TextBlock)row.Children[2]).Text = handle;
+        };
+        return b;
+    }
+
+    // ----- your own links (Settings) -----
+
+    readonly Dictionary<string, TextBox> linkBoxes = [];
+
+    void BuildLinkBoxes()
+    {
+        var cfg = Program.Settings();
+        if (LinkBoxes.Children.Count == 0)
+            foreach (var n in Social.Networks)
+            {
+                var sp = new StackPanel { Width = 250, Margin = new Thickness(0, 0, 12, 10), Spacing = 4 };
+                var head = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+                head.Children.Add(new Border { Width = 8, Height = 8, CornerRadius = new CornerRadius(4), Background = Fmt.Brush(n.Color), VerticalAlignment = VerticalAlignment.Center });
+                head.Children.Add(new TextBlock { Text = n.Label, FontSize = 12, FontWeight = FontWeight.SemiBold });
+                sp.Children.Add(head);
+                var box = new TextBox { Watermark = n.Placeholder, MaxLength = 120 };
+                box.Classes.Add("search");
+                sp.Children.Add(box);
+                linkBoxes[n.Key] = box;
+                LinkBoxes.Children.Add(sp);
+            }
+        foreach (var n in Social.Networks)
+            linkBoxes[n.Key].Text = cfg.Links.GetValueOrDefault(n.Key, "");
+    }
+
+    async void SaveLinks_Click(object? sender, RoutedEventArgs e)
+    {
+        var cfg = Program.Settings();
+        var bad = new List<string>();
+        cfg.Links.Clear();
+        foreach (var n in Social.Networks)
+        {
+            var text = linkBoxes[n.Key].Text ?? "";
+            if (text.Trim().Length == 0) continue;
+            if (Social.Clean(n, text) is string clean) { cfg.Links[n.Key] = clean; linkBoxes[n.Key].Text = clean; }
+            else bad.Add(n.Label);
+        }
+        Program.SaveSettings(cfg);
+        if (bad.Count > 0) { LinksStatus.Text = $"Check {string.Join(", ", bad)}: that doesn't look like a username."; return; }
+        if (Online.Enabled)
+        {
+            LinksStatus.Text = "Saving…";
+            await UploadNow();
+            LinksStatus.Text = "Saved. They're on your profile now.";
+        }
+        else LinksStatus.Text = "Saved. They'll show once you join the leaderboards.";
     }
 
     async Task LoadHeader(Image img, string appId)
@@ -1512,7 +1671,7 @@ public partial class MainWindow : Window
             var last = c?["last"];
             var preview = (S(last?["sender"]) == Online.MyId ? "You: " : "") + S(last?["text"]);
             if (id == chatWith) { listed = true; chatBlocked = c?["blocked"]?.GetValue<bool>() == true; }
-            ChatRooms.Children.Add(ChatRoomButton(id, S(c?["name"]), preview, S(c?["icon"]), id == chatWith));
+            ChatRooms.Children.Add(ChatRoomButton(id, S(c?["name"]), preview, S(c?["icon"]), id == chatWith, L(c?["avatar"])));
         }
         if (chatWith != null && !listed)
         {
@@ -1522,13 +1681,13 @@ public partial class MainWindow : Window
         ChatBlockText.Text = chatBlocked ? "Unblock" : "Block";
     }
 
-    Control ChatRoomButton(string? id, string name, string sub, string icon, bool active)
+    Control ChatRoomButton(string? id, string name, string sub, string icon, bool active, long pictureVer = 0)
     {
         var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 };
         row.Children.Add(id == null
             ? new Border { Width = 34, Height = 34, CornerRadius = new CornerRadius(17), Background = Fmt.Tint(Palette.Brush, 0x30),
                            Child = new PathIcon { Data = Icon("IconChat"), Width = 16, Height = 16, Foreground = Palette.Brush } }
-            : Avatar(icon, name, 34, Res("Line")));
+            : Avatar(icon, name, 34, Res("Line"), id, pictureVer));
         var t = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Width = 170 };
         t.Children.Add(new TextBlock { Text = name, FontWeight = FontWeight.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis });
         t.Children.Add(new TextBlock { Text = sub, FontSize = 12, Foreground = Res("Muted"), TextTrimming = TextTrimming.CharacterEllipsis });
@@ -1564,7 +1723,7 @@ public partial class MainWindow : Window
         col.Children.Add(head);
         col.Children.Add(bubble);
 
-        var avatar = Avatar(S(m?["icon"]), name, 36, Fmt.Brush(rankHex));
+        var avatar = Avatar(S(m?["icon"]), name, 36, Fmt.Brush(rankHex), sender, L(m?["avatar"]));
         avatar.VerticalAlignment = VerticalAlignment.Top;
         if (!mine)
         {

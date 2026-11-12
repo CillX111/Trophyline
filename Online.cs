@@ -139,12 +139,21 @@ static class Online
             ["profile"] = new JsonObject
             {
                 ["icon"] = shop.Owned.Contains(shop.Equipped) ? shop.Equipped : "",
+                ["links"] = Links(cfg),
                 ["topGames"] = new JsonArray(top.ToArray()),
                 ["recent"] = new JsonArray(recent.ToArray()),
             },
         };
         var (_, err) = await Rpc("tl_upsert", new JsonObject { ["p"] = p });
         return err == "too often" ? null : err;
+    }
+
+    static JsonObject Links(Config cfg)
+    {
+        var o = new JsonObject();
+        foreach (var n in Social.Networks)
+            if (cfg.Links.TryGetValue(n.Key, out var h) && Social.Clean(n, h) is string clean) o[n.Key] = clean;
+        return o;
     }
 
     // ---------- reading ----------
@@ -155,6 +164,19 @@ static class Online
     public static Task<JsonNode?> Player(string id) => Read("tl_player", new JsonObject { ["p_id"] = id });
 
     public static Task<JsonNode?> Seasons() => Read("tl_seasons", []);
+
+    // ---------- profile pictures ----------
+
+    /// Uploads your picture (null removes it). Returns an error text or null.
+    public static async Task<string?> SetAvatar(byte[]? jpeg)
+    {
+        if (!Enabled) return null;
+        var args = Me();
+        args["p_data"] = jpeg == null ? "" : Convert.ToBase64String(jpeg);
+        return (await Rpc("tl_set_avatar", args)).Error;
+    }
+
+    public static Task<JsonNode?> Avatar(string id) => Read("tl_avatar", new JsonObject { ["p_id"] = id });
 
     // ---------- chat ----------
 

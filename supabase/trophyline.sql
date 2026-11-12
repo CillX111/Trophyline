@@ -54,11 +54,20 @@ create table if not exists blocks (
   primary key (player, blocked)
 );
 
+-- profile pictures: a small square JPEG or PNG (the app makes it 128 x 128)
+alter table players add column if not exists avatar_ver bigint not null default 0; -- 0 = no picture
+create table if not exists avatars (
+  player  text primary key references players(id) on delete cascade,
+  data    bytea not null,
+  updated bigint not null
+);
+
 alter table players enable row level security;
 alter table season_scores enable row level security;
 alter table messages enable row level security;
 alter table blocks enable row level security;
-revoke all on players, season_scores, messages, blocks from anon, authenticated;
+alter table avatars enable row level security;
+revoke all on players, season_scores, messages, blocks, avatars from anon, authenticated;
 
 -- ---------- helpers ----------
 
@@ -192,7 +201,7 @@ begin
   return jsonb_build_object(
     'id', pl.id, 'name', pl.name, 'level', pl.level, 'rank', pl.rank, 'xp', pl.xp, 'perfect', pl.perfect,
     'over75', pl.over75, 'unlocked', pl.unlocked, 'games', pl.games, 'hours', pl.hours, 'profile', pl.profile,
-    'created', pl.created, 'updated', pl.updated,
+    'created', pl.created, 'updated', pl.updated, 'avatar', pl.avatar_ver,
     'season', cur || jsonb_build_object('xp', coalesce(sxp, 0)),
     'places', jsonb_build_object(
       'xp', (select count(*) + 1 from players where xp > pl.xp),
@@ -216,7 +225,7 @@ begin
     s := coalesce(tl_season_parse(p_season), tl_season());
     select coalesce(jsonb_agg(to_jsonb(r) order by r.pos), '[]'::jsonb) into v_rows from (
       select row_number() over (order by ss.xp desc, pl.xp desc) as pos, pl.id, pl.name, pl.level, pl.rank,
-             coalesce(pl.profile->>'icon', '') as icon, ss.xp as value
+             coalesce(pl.profile->>'icon', '') as icon, pl.avatar_ver as avatar, ss.xp as value
       from season_scores ss join players pl on pl.id = ss.player
       where ss.season = s->>'id' and ss.xp > 0
       order by ss.xp desc, pl.xp desc limit lim) r;
@@ -229,7 +238,7 @@ begin
     execute format(
       'select coalesce(jsonb_agg(to_jsonb(r) order by r.pos), ''[]''::jsonb) from (
          select row_number() over (order by %1$I desc, xp desc) as pos, id, name, level, rank,
-                coalesce(profile->>''icon'', '''') as icon, %1$I::bigint as value
+                coalesce(profile->>''icon'', '''') as icon, avatar_ver as avatar, %1$I::bigint as value
          from players where %1$I > 0 order by %1$I desc, xp desc limit $1) r', p_board)
       into v_rows using lim;
     if p_me is not null then
@@ -256,7 +265,7 @@ declare
 begin
   while (s->>'number')::int >= 1 and jsonb_array_length(out) < 12 loop
     select coalesce(jsonb_agg(to_jsonb(r) order by r.value desc), '[]'::jsonb) into top from (
-      select pl.id, pl.name, pl.level, pl.rank, coalesce(pl.profile->>'icon', '') as icon, ss.xp as value
+      select pl.id, pl.name, pl.level, pl.rank, coalesce(pl.profile->>'icon', '') as icon, pl.avatar_ver as avatar, ss.xp as value
       from season_scores ss join players pl on pl.id = ss.player
       where ss.season = s->>'id' and ss.xp > 0 order by ss.xp desc limit 3) r;
     out := out || jsonb_build_array(s || jsonb_build_object('current', s->>'id' = cur->>'id', 'top', top));
@@ -302,7 +311,7 @@ end $$;
 create or replace function tl_chat_room(p_room text, p_after bigint, p_viewer text) returns jsonb language sql stable
 set search_path = public, extensions as $$
   select jsonb_build_object('room', p_room, 'messages', coalesce(jsonb_agg(to_jsonb(r) order by r.id), '[]'::jsonb)) from (
-    select m.id, m.sender, m.text, m.time, pl.name, pl.level, coalesce(pl.profile->>'icon', '') as icon
+    select m.id, m.sender, m.text, m.time, pl.name, pl.level, coalesce(pl.profile->>'icon', '') as icon, pl.avatar_ver as avatar
     from messages m join players pl on pl.id = m.sender
     where m.room = p_room and m.id > coalesce(p_after, 0)
       and (p_viewer is null or m.sender not in (select blocked from blocks where player = p_viewer))
@@ -331,7 +340,7 @@ begin
   if me is null then raise exception 'not signed in'; end if;
   return jsonb_build_object('conversations', coalesce((
     select jsonb_agg(to_jsonb(c) order by c.last_id desc) from (
-      select other.id, other.name, other.level, coalesce(other.profile->>'icon', '') as icon,
+      select other.id, other.name, other.level, coalesce(other.profile->>'icon', '') as icon, other.avatar_ver as avatar,
              exists (select 1 from blocks b where b.player = me and b.blocked = other.id) as blocked,
              lm.id as last_id,
              jsonb_build_object('id', lm.id, 'sender', lm.sender, 'text', lm.text, 'time', lm.time) as last
@@ -356,6 +365,46 @@ begin
   return jsonb_build_object('ok', true);
 end $$;
 
+-- ---------- profile pictures ----------
+
+-- p_data: base64 of a JPEG or PNG, at most 64 KB; empty removes the picture
+create or replace function tl_set_avatar(p_id text, p_secret text, p_data text) returns jsonb
+language plpgsql security definer
+set search_path = public, extensions as $$
+declare
+  me text := tl_auth(p_id, p_secret);
+  img bytea;
+  v_now bigint := tl_now();
+begin
+  if me is null then raise exception 'join the leaderboards first'; end if;
+  if coalesce(p_data, '') = '' then
+    delete from avatars where player = me;
+    update players set avatar_ver = 0 where id = me;
+    return jsonb_build_object('ok', true, 'avatar', 0);
+  end if;
+  if length(p_data) > 90000 then raise exception 'picture too big'; end if;
+  begin
+    img := decode(p_data, 'base64');
+  exception when others then
+    raise exception 'not a picture';
+  end;
+  if length(img) > 65536 then raise exception 'picture too big'; end if;
+  -- only JPEG (FF D8 FF) or PNG (89 50 4E 47)
+  if not (substring(img from 1 for 3) = '\xffd8ff'::bytea or substring(img from 1 for 4) = '\x89504e47'::bytea) then
+    raise exception 'only JPEG or PNG pictures';
+  end if;
+  insert into avatars (player, data, updated) values (me, img, v_now)
+  on conflict (player) do update set data = excluded.data, updated = excluded.updated;
+  update players set avatar_ver = v_now where id = me;
+  return jsonb_build_object('ok', true, 'avatar', v_now);
+end $$;
+
+create or replace function tl_avatar(p_id text) returns jsonb language sql stable security definer
+set search_path = public, extensions as $$
+  select coalesce((select jsonb_build_object('ver', updated, 'data', encode(data, 'base64'))
+                   from avatars where player = p_id), jsonb_build_object('ver', 0, 'data', ''))
+$$;
+
 -- ---------- who may call what ----------
 -- Only the tl_* entry points are callable with the public app key.
 
@@ -364,5 +413,6 @@ grant execute on function
   tl_status(), tl_upsert(jsonb), tl_delete(text, text), tl_player(text),
   tl_leaderboard(text, text, text, int), tl_seasons(),
   tl_chat_send(jsonb), tl_chat_lobby(bigint, text, text), tl_chat_dm(text, text, text, bigint),
-  tl_chat_inbox(text, text), tl_chat_block(text, text, text, boolean)
+  tl_chat_inbox(text, text), tl_chat_block(text, text, text, boolean),
+  tl_set_avatar(text, text, text), tl_avatar(text)
 to anon, authenticated;

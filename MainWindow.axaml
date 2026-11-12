@@ -174,16 +174,22 @@
                     </StackPanel>
                 </Border>
 
-                <StackPanel>
+                <!-- the menu scrolls when the window is too short for all of it -->
+                <ScrollViewer HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto" Margin="0,0,0,8">
+                <StackPanel Margin="0,0,0,6">
                     <RadioButton x:Name="NavOverview" Classes="nav" GroupName="nav" Tag="{StaticResource IconHome}" Content="Overview" IsChecked="True"/>
                     <RadioButton x:Name="NavAchievements" Classes="nav" GroupName="nav" Tag="{StaticResource IconStar}" Content="Achievements"/>
                     <RadioButton x:Name="NavGames" Classes="nav" GroupName="nav" Tag="{StaticResource IconGame}" Content="Games"/>
                     <RadioButton x:Name="NavLevel" Classes="nav" GroupName="nav" Tag="{StaticResource IconShield}" Content="Level"/>
+                    <RadioButton x:Name="NavLeaderboard" Classes="nav" GroupName="nav" Tag="{StaticResource IconPodium}" Content="Leaderboards"/>
+                    <RadioButton x:Name="NavChat" Classes="nav" GroupName="nav" Tag="{StaticResource IconChat}" Content="Chat"/>
+                    <RadioButton x:Name="NavShop" Classes="nav" GroupName="nav" Tag="{StaticResource IconCart}" Content="Shop"/>
                     <RadioButton x:Name="NavPlaytime" Classes="nav" GroupName="nav" Tag="{StaticResource IconClock}" Content="Playtime"/>
                     <RadioButton x:Name="NavStorage" Classes="nav" GroupName="nav" Tag="{StaticResource IconDrive}" Content="Storage"/>
                     <RadioButton x:Name="NavMusic" Classes="nav" GroupName="nav" Tag="{StaticResource IconMusic}" Content="Music"/>
                     <RadioButton x:Name="NavSettings" Classes="nav" GroupName="nav" Tag="{StaticResource IconSettings}" Content="Settings"/>
                 </StackPanel>
+                </ScrollViewer>
             </DockPanel>
         </Border>
 
@@ -297,7 +303,11 @@
                                                ToolTip.Tip="XP this achievement is worth (rarer achievements give more)"/>
                                     <Border Width="56" Height="56" CornerRadius="9" Background="{StaticResource Line}"
                                             BorderBrush="{Binding IconBorder}" BorderThickness="2" ClipToBounds="True">
-                                        <Image Source="{Binding Icon}" Stretch="UniformToFill"/>
+                                        <Panel>
+                                            <Image Source="{Binding Icon}" Stretch="UniformToFill"/>
+                                            <PathIcon Data="{StaticResource IconLock}" Width="22" Height="22" Foreground="{StaticResource Muted}"
+                                                      IsVisible="{Binding Secret}"/>
+                                        </Panel>
                                     </Border>
                                     <StackPanel Grid.Column="1" Margin="14,0" VerticalAlignment="Center">
                                         <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="15" TextWrapping="Wrap"/>
@@ -416,7 +426,11 @@
                                                ToolTip.Tip="XP this achievement is worth (rarer achievements give more)"/>
                                     <Border Width="56" Height="56" CornerRadius="9" Background="{StaticResource Line}"
                                             BorderBrush="{Binding IconBorder}" BorderThickness="2" ClipToBounds="True">
-                                        <Image Source="{Binding Icon}" Stretch="UniformToFill"/>
+                                        <Panel>
+                                            <Image Source="{Binding Icon}" Stretch="UniformToFill"/>
+                                            <PathIcon Data="{StaticResource IconLock}" Width="22" Height="22" Foreground="{StaticResource Muted}"
+                                                      IsVisible="{Binding Secret}"/>
+                                        </Panel>
                                     </Border>
                                     <StackPanel Grid.Column="1" Margin="14,0" VerticalAlignment="Center">
                                         <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="15" TextWrapping="Wrap"/>
@@ -606,6 +620,156 @@
                 </StackPanel>
             </ScrollViewer>
 
+            <!-- Leaderboards (online) -->
+            <ScrollViewer x:Name="LeaderboardPage" IsVisible="False">
+                <StackPanel Margin="30,26,30,30">
+                    <DockPanel>
+                        <Button x:Name="LbRefresh" DockPanel.Dock="Right" Classes="pill" Click="LbRefresh_Click" VerticalAlignment="Center">
+                            <TextBlock Text="Refresh"/>
+                        </Button>
+                        <StackPanel>
+                            <TextBlock Text="Leaderboards" Classes="pageTitle"/>
+                            <TextBlock x:Name="LbSub" Classes="muted" Margin="0,4,0,0" TextWrapping="Wrap"/>
+                        </StackPanel>
+                    </DockPanel>
+
+                    <!-- current season -->
+                    <Border Classes="card" Padding="22,18" Margin="0,18,0,0" ClipToBounds="True">
+                        <Border.Background>
+                            <LinearGradientBrush StartPoint="0%,0%" EndPoint="100%,100%">
+                                <GradientStop Color="#1C2633" Offset="0"/>
+                                <GradientStop Color="#151C25" Offset="1"/>
+                            </LinearGradientBrush>
+                        </Border.Background>
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel>
+                                <TextBlock x:Name="SeasonKicker" FontSize="11" FontWeight="Bold" Foreground="{DynamicResource Accent}"/>
+                                <TextBlock x:Name="SeasonTitle" FontSize="28" FontWeight="Bold" Margin="0,2,0,0"/>
+                                <TextBlock x:Name="SeasonSub" Classes="muted" FontSize="13" Margin="0,2,0,12" TextWrapping="Wrap"/>
+                                <ProgressBar x:Name="SeasonBar" Classes="thin" Background="{StaticResource Line}" Foreground="{DynamicResource AccentGradient}"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="1" Margin="30,0,6,0" VerticalAlignment="Center">
+                                <TextBlock Text="YOUR SEASON XP" FontSize="11" FontWeight="Bold" Classes="muted" HorizontalAlignment="Right"/>
+                                <TextBlock x:Name="MySeasonXp" FontSize="34" FontWeight="Bold" HorizontalAlignment="Right"/>
+                                <TextBlock x:Name="MySeasonPlace" Classes="muted" FontSize="13" HorizontalAlignment="Right"/>
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+
+                    <!-- join -->
+                    <Border x:Name="JoinCard" Classes="card" Padding="18,14" Margin="0,12,0,0" BorderBrush="{DynamicResource Accent}">
+                        <Grid ColumnDefinitions="*,12,220,12,Auto">
+                            <StackPanel VerticalAlignment="Center">
+                                <TextBlock Text="Join the leaderboards" FontWeight="SemiBold" FontSize="15"/>
+                                <TextBlock x:Name="JoinHint" Classes="muted" FontSize="12" TextWrapping="Wrap"
+                                           Text="Pick a name. Shared: that name, your level, XP, game counts, icon, top games and latest unlocks."/>
+                            </StackPanel>
+                            <TextBox x:Name="JoinName" Grid.Column="2" Classes="search" Watermark="Your name" MaxLength="24"/>
+                            <Button Grid.Column="4" Classes="primary" Click="Join_Click" Content="Join"/>
+                        </Grid>
+                    </Border>
+
+                    <Grid ColumnDefinitions="*,Auto" Margin="0,20,0,10">
+                        <StackPanel Orientation="Horizontal">
+                            <RadioButton x:Name="BoardSeason" Classes="chip" GroupName="board" Content="Season XP" IsChecked="True"/>
+                            <RadioButton x:Name="BoardXp" Classes="chip" GroupName="board" Content="Highest XP"/>
+                            <RadioButton x:Name="BoardPerfect" Classes="chip" GroupName="board" Content="Most completed games"/>
+                            <RadioButton x:Name="BoardOver75" Classes="chip" GroupName="board" Content="Most games over 75%"/>
+                        </StackPanel>
+                        <ComboBox x:Name="SeasonPick" Grid.Column="1" Classes="drop" MinWidth="220"/>
+                    </Grid>
+                    <StackPanel x:Name="LbRows" Spacing="6"/>
+                    <TextBlock x:Name="LbEmpty" Classes="muted" TextWrapping="Wrap" Margin="0,16,0,0" IsVisible="False"/>
+
+                    <TextBlock Text="Season champions" Classes="section" Margin="0,26,0,12"/>
+                    <WrapPanel x:Name="SeasonHistory"/>
+                </StackPanel>
+            </ScrollViewer>
+
+            <!-- Chat -->
+            <Grid x:Name="ChatPage" IsVisible="False" ColumnDefinitions="260,*" Margin="30,26,30,24" RowDefinitions="Auto,*">
+                <StackPanel Grid.ColumnSpan="2" Margin="0,0,0,16">
+                    <TextBlock Text="Chat" Classes="pageTitle"/>
+                    <TextBlock x:Name="ChatSub" Classes="muted" Margin="0,4,0,0" TextWrapping="Wrap"
+                               Text="Talk to everyone in the lobby, or message a player privately (open their profile → Message)."/>
+                </StackPanel>
+
+                <!-- conversations -->
+                <Border Grid.Row="1" Classes="card" Padding="8" Margin="0,0,16,0">
+                    <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+                        <StackPanel x:Name="ChatRooms" Spacing="4"/>
+                    </ScrollViewer>
+                </Border>
+
+                <!-- messages -->
+                <Border Grid.Row="1" Grid.Column="1" Classes="card" Padding="0">
+                    <Grid RowDefinitions="Auto,*,Auto">
+                        <DockPanel Margin="18,12" LastChildFill="True">
+                            <Button x:Name="ChatBlockButton" DockPanel.Dock="Right" Classes="pill" Click="ChatBlock_Click" IsVisible="False">
+                                <TextBlock x:Name="ChatBlockText" Text="Block"/>
+                            </Button>
+                            <Button x:Name="ChatProfileButton" DockPanel.Dock="Right" Classes="pill" Click="ChatProfile_Click" IsVisible="False" Margin="0,0,8,0">
+                                <TextBlock Text="Profile"/>
+                            </Button>
+                            <StackPanel VerticalAlignment="Center">
+                                <TextBlock x:Name="ChatTitle" Text="Lobby" FontSize="17" FontWeight="SemiBold"/>
+                                <TextBlock x:Name="ChatTitleSub" Classes="muted" FontSize="12"/>
+                            </StackPanel>
+                        </DockPanel>
+                        <Border Grid.Row="1" BorderBrush="{StaticResource Line}" BorderThickness="0,1">
+                            <ScrollViewer x:Name="ChatScroll" HorizontalScrollBarVisibility="Disabled">
+                                <StackPanel x:Name="ChatMessages" Margin="18,12" Spacing="10"/>
+                            </ScrollViewer>
+                        </Border>
+                        <Grid Grid.Row="2" ColumnDefinitions="*,10,Auto" Margin="14,12">
+                            <TextBox x:Name="ChatInput" Classes="search" Watermark="Write a message…" MaxLength="500" AcceptsReturn="False"/>
+                            <Button Grid.Column="2" Classes="primary" Click="ChatSend_Click" MinWidth="0" Padding="0">
+                                <PathIcon Data="{StaticResource IconSend}" Width="18" Height="18"/>
+                            </Button>
+                        </Grid>
+                    </Grid>
+                </Border>
+            </Grid>
+
+            <!-- Someone's profile -->
+            <ScrollViewer x:Name="PlayerPage" IsVisible="False">
+                <StackPanel Margin="30,22,30,30">
+                    <Button Classes="pill" Click="PlayerBack_Click" HorizontalAlignment="Left">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <PathIcon Data="{StaticResource IconBack}" Width="14" Height="14"/>
+                            <TextBlock Text="Leaderboards"/>
+                        </StackPanel>
+                    </Button>
+                    <StackPanel x:Name="PlayerBody" Margin="0,18,0,0"/>
+                </StackPanel>
+            </ScrollViewer>
+
+            <!-- Shop -->
+            <ScrollViewer x:Name="ShopPage" IsVisible="False">
+                <StackPanel Margin="30,26,30,30">
+                    <TextBlock Text="Shop" Classes="pageTitle"/>
+                    <TextBlock Classes="muted" Margin="0,4,0,0" TextWrapping="Wrap"
+                               Text="Every level you reach gives you coins. Spend them on profile icons: they show on your profile, in the sidebar and on the online leaderboards."/>
+                    <Border Classes="card" Padding="22,18" Margin="0,18,0,0">
+                        <Grid ColumnDefinitions="Auto,*,Auto">
+                            <Border Width="64" Height="64" CornerRadius="32" Background="#33F5C451">
+                                <PathIcon Data="{StaticResource IconCoin}" Width="34" Height="34" Foreground="{StaticResource Gold}"/>
+                            </Border>
+                            <StackPanel Grid.Column="1" Margin="18,0" VerticalAlignment="Center">
+                                <TextBlock x:Name="CoinBalance" FontSize="32" FontWeight="Bold" Foreground="{StaticResource Gold}"/>
+                                <TextBlock x:Name="CoinSub" Classes="muted" FontSize="13"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="2" VerticalAlignment="Center" HorizontalAlignment="Right">
+                                <TextBlock Text="EQUIPPED" FontSize="11" FontWeight="Bold" Classes="muted" HorizontalAlignment="Center"/>
+                                <Panel x:Name="EquippedPreview" Margin="0,6,0,0"/>
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+                    <TextBlock x:Name="ShopMessage" Margin="2,12,0,0" FontWeight="SemiBold" IsVisible="False"/>
+                    <StackPanel x:Name="ShopTiers" Margin="0,8,0,0"/>
+                </StackPanel>
+            </ScrollViewer>
+
             <!-- Playtime (sessions recorded by the tracker) -->
             <ScrollViewer x:Name="PlaytimePage" IsVisible="False">
                 <StackPanel Margin="30,26,30,30">
@@ -689,6 +853,23 @@
                                 <TextBlock Text="Show a test pop-up"/>
                             </Button>
                         </Grid>
+                    </Border>
+
+                    <TextBlock Text="Online leaderboards" Classes="section" Margin="0,20,0,4"/>
+                    <TextBlock Classes="muted" FontSize="13" Margin="0,0,0,14" TextWrapping="Wrap"
+                               Text="Shared when this is on: your display name, level, XP, season XP, game counts, equipped icon, top games and latest unlocks. Never your Steam login. Turning it off removes you from the server."/>
+                    <Border Classes="card" Padding="16,12" Margin="0,0,0,10">
+                        <StackPanel Spacing="10">
+                            <ToggleSwitch x:Name="OnlineSwitch" OnContent="" OffContent="" Padding="0" MinWidth="0"
+                                          Content="Show me on the online leaderboards"/>
+                            <Grid ColumnDefinitions="260,12,Auto">
+                                <TextBox x:Name="OnlineNameBox" Classes="search" Watermark="Display name" MaxLength="24"/>
+                                <Button Grid.Column="2" Classes="pill" Click="SaveOnlineName_Click" VerticalAlignment="Center">
+                                    <TextBlock Text="Save name"/>
+                                </Button>
+                            </Grid>
+                            <TextBlock x:Name="OnlineStatus" Classes="muted" FontSize="12" TextWrapping="Wrap"/>
+                        </StackPanel>
                     </Border>
 
                     <TextBlock Text="Game soundtracks" Classes="section" Margin="0,20,0,4"/>

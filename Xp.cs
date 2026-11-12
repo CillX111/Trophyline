@@ -68,7 +68,11 @@ static class Xp
 
     public sealed record Gain(long Time, string Text, string Game, int Amount);
 
-    public sealed record Result(long Total, int Level, int Into, int Need, List<(string Source, int Count, long Xp)> Breakdown, List<Gain> Recent);
+    public sealed record Result(long Total, int Level, int Into, int Need, List<(string Source, int Count, long Xp)> Breakdown, List<Gain> Recent, List<Gain> All)
+    {
+        /// XP earned with a date inside this season (achievements, new games, 100%s and sessions).
+        public long SeasonXp(Season s) => All.Where(g => g.Time >= s.Start && g.Time < s.End).Sum(g => (long)g.Amount);
+    }
 
     public static Result Compute(IEnumerable<GameInfo> games, IEnumerable<Session> sessions)
     {
@@ -119,7 +123,8 @@ static class Xp
             ("Hours played", hours, play),
             ("Sessions", counted.Count, sess),
         };
-        return new Result(total, level, into, need, breakdown, gains.OrderByDescending(g => g.Time).Take(40).ToList());
+        var sorted = gains.OrderByDescending(g => g.Time).ToList();
+        return new Result(total, level, into, need, breakdown, sorted.Take(40).ToList(), sorted);
     }
 
     // ---------- level-ups ----------

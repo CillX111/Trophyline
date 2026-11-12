@@ -1,3 +1,4 @@
+using System.Text.Json.Nodes;
 using Avalonia;
 using Avalonia.Animation;
 using Avalonia.Animation.Easings;
@@ -63,6 +64,31 @@ public partial class MainWindow : Window
         NavGames.IsCheckedChanged += (_, _) => { if (NavGames.IsChecked == true && !syncingNav) ShowPage(GamesPage); };
         NavStorage.IsCheckedChanged += (_, _) => { if (NavStorage.IsChecked == true && !syncingNav) ShowPage(StoragePage); };
         NavMusic.IsCheckedChanged += (_, _) => { if (NavMusic.IsChecked == true && !syncingNav) ShowPage(MusicPage); };
+        NavLeaderboard.IsCheckedChanged += async (_, _) => { if (NavLeaderboard.IsChecked == true && !syncingNav) { ShowPage(LeaderboardPage); await LoadLeaderboard(); } };
+        NavShop.IsCheckedChanged += (_, _) => { if (NavShop.IsChecked == true && !syncingNav) { BuildShop(); ShowPage(ShopPage); } };
+        NavChat.IsCheckedChanged += async (_, _) => { if (NavChat.IsChecked == true && !syncingNav) { ShowPage(ChatPage); await RefreshChat(full: true); } };
+        chatTimer.Tick += async (_, _) => { if (ChatPage.IsVisible) await RefreshChat(full: false); };
+        ChatInput.KeyDown += async (_, e) => { if (e.Key == Key.Enter) { e.Handled = true; await SendChat(); } };
+        foreach (var (rb, key) in new[] { (BoardSeason, "season"), (BoardXp, "xp"), (BoardPerfect, "perfect"), (BoardOver75, "over75") })
+            rb.IsCheckedChanged += async (_, _) => { if (rb.IsChecked == true) { board = key; await LoadLeaderboard(); } };
+        SeasonPick.SelectionChanged += async (_, _) => { if (!fillingSeasons) await LoadLeaderboard(); };
+        OnlineSwitch.IsCheckedChanged += async (_, _) =>
+        {
+            if (fillingSettings) return;
+            if (OnlineSwitch.IsChecked == true)
+            {
+                var name = (OnlineNameBox.Text ?? "").Trim();
+                if (name.Length == 0) name = data?.PersonaName ?? "Player";
+                Online.Enable(name);
+                OnlineNameBox.Text = name;
+                await UploadNow();
+            }
+            else
+            {
+                var err = await Online.Disable();
+                OnlineStatus.Text = err == null ? "You're offline. Your entry was removed from the server." : "Turned off, but couldn't reach the server: " + err;
+            }
+        };
         NavLevel.IsCheckedChanged += (_, _) => { if (NavLevel.IsChecked == true && !syncingNav) { ShowPage(LevelPage); AnimateLevelBar(); } };
         NavPlaytime.IsCheckedChanged += (_, _) => { if (NavPlaytime.IsChecked == true && !syncingNav) { BuildPlaytime(); ShowPage(PlaytimePage); } };
         nowTimer.Tick += (_, _) => { if (PlaytimePage.IsVisible) UpdateNowPlaying(); };
@@ -755,6 +781,11 @@ public partial class MainWindow : Window
             var cfg = Program.Settings();
             PauseOnQuitSwitch.IsChecked = cfg.PauseSoundtrackOnQuit;
             PopupsSwitch.IsChecked = cfg.UnlockPopups;
+            OnlineSwitch.IsChecked = cfg.OnlineEnabled;
+            OnlineSwitch.IsEnabled = Online.Available;
+            OnlineNameBox.Text = cfg.OnlineName.Length > 0 ? cfg.OnlineName : data?.PersonaName ?? "";
+            OnlineStatus.Text = !Online.Available ? "The Trophyline server isn't set up yet, so this can't be turned on."
+                : cfg.OnlineEnabled ? $"You're on the leaderboards as \"{cfg.OnlineName}\"." : "You're not on the leaderboards.";
             int n = SoundtrackStore.Load().Count;
             SoundtrackCount.Text = (n == 0 ? "No game has a soundtrack yet." : $"{n} game{(n == 1 ? " has" : "s have")} a soundtrack.")
                 + (Program.TrackerRunning() ? "" : "  The background tracker isn't running, so soundtracks won't start.");
@@ -969,6 +1000,405 @@ public partial class MainWindow : Window
             : r.Recent.Take(12).Select(g => XpRow(g.Text, $"{g.Game}  ·  {Fmt.Ago(g.Time)}", $"+{g.Amount} XP", true)).ToList();
 
         CheckLevelUp(r.Level, title);
+        UpdateAvatar();
+        if (Online.Enabled) _ = UploadNow(force: false);
+    }
+
+    // =============== online: upload, leaderboards, profiles ===============
+
+    string board = "season";
+    bool fillingSeasons;
+    List<string> seasonIds = [];
+
+    async Task UploadNow(bool force = true)
+    {
+        if (data == null || xp == null) return;
+        var err = await Online.Upload(data.Games, xp, force);
+        if (OnlineStatus != null)
+            OnlineStatus.Text = err == null
+                ? (Online.Enabled ? $"You're on the leaderboards as \"{Program.Settings().OnlineName}\"." : OnlineStatus.Text)
+                : "Couldn't reach the server: " + err;
+    }
+
+    async void Join_Click(object? sender, RoutedEventArgs e)
+    {
+        var name = (JoinName.Text ?? "").Trim();
+        if (name.Length == 0) { JoinHint.Text = "Type a name first."; return; }
+        Online.Enable(name);
+        JoinHint.Text = "Joining…";
+        await UploadNow();
+        await LoadLeaderboard();
+    }
+
+    async void SaveOnlineName_Click(object? sender, RoutedEventArgs e)
+    {
+        var name = (OnlineNameBox.Text ?? "").Trim();
+        if (name.Length == 0) return;
+        var cfg = Program.Settings();
+        cfg.OnlineName = name;
+        Program.SaveSettings(cfg);
+        if (Online.Enabled) await UploadNow();
+        else OnlineStatus.Text = "Name saved. Turn the switch on to join.";
+    }
+
+    async void LbRefresh_Click(object? sender, RoutedEventArgs e)
+    {
+        if (Online.Enabled) await UploadNow();
+        await LoadLeaderboard();
+    }
+
+    static long L(JsonNode? n)
+    {
+        if (n == null) return 0;
+        var s = n.ToJsonString();
+        return long.TryParse(s, out var v) ? v
+             : double.TryParse(s, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var d) ? (long)d : 0;
+    }
+
+    static string S(JsonNode? n) => n == null ? "" : n.GetValueKind() == System.Text.Json.JsonValueKind.String ? n.GetValue<string>() : n.ToJsonString();
+
+    string BoardValue(long v) => board switch
+    {
+        "perfect" => $"{v:N0} {(v == 1 ? "game" : "games")} at 100%",
+        "over75" => $"{v:N0} {(v == 1 ? "game" : "games")}",
+        _ => $"{v:N0} XP",
+    };
+
+    async Task LoadLeaderboard()
+    {
+        var season = Season.Current;
+        SeasonKicker.Text = $"{season.Name.ToUpperInvariant()}  ·  {season.Label.ToUpperInvariant()}";
+        SeasonTitle.Text = season.Label;
+        var start = DateTimeOffset.FromUnixTimeSeconds(season.Start).LocalDateTime;
+        var end = DateTimeOffset.FromUnixTimeSeconds(season.End).LocalDateTime.AddDays(-1);
+        SeasonSub.Text = $"{start:dd.MM.yyyy} – {end:dd.MM.yyyy}  ·  {season.DaysLeft} days left. Every season lasts 3 months; season XP starts at 0 each time.";
+        SeasonBar.Value = Math.Clamp((DateTimeOffset.UtcNow.ToUnixTimeSeconds() - season.Start) / (double)(season.End - season.Start), 0, 1);
+        MySeasonXp.Text = xp != null ? $"{xp.SeasonXp(season):N0}" : "–";
+        MySeasonPlace.Text = Online.Enabled ? "" : "not on the leaderboards";
+
+        SeasonPick.IsVisible = board == "season";
+        if (!Online.Available)
+        {
+            LbSub.Text = "Online leaderboards need the Trophyline server, which isn't set up yet.";
+            JoinCard.IsVisible = false;
+            LbRows.Children.Clear();
+            LbEmpty.IsVisible = true;
+            LbEmpty.Text = "Once the server is online, you'll see everyone's season XP, highest XP, completed games and games over 75% here.";
+            return;
+        }
+        JoinCard.IsVisible = !Online.Enabled;
+        if (string.IsNullOrWhiteSpace(JoinName.Text)) JoinName.Text = data?.PersonaName ?? "";
+
+        // the season picker and the champions list
+        if (seasonIds.Count == 0 && await Online.Seasons() is JsonNode sn)
+        {
+            fillingSeasons = true;
+            var list = sn["seasons"]?.AsArray() ?? [];
+            seasonIds = list.Select(s => S(s?["id"])).ToList();
+            SeasonPick.ItemsSource = list.Select(s => $"{S(s?["name"])} · {S(s?["label"])}" + (s?["current"]?.GetValue<bool>() == true ? " (now)" : "")).ToList();
+            SeasonPick.SelectedIndex = 0;
+            fillingSeasons = false;
+            BuildSeasonHistory(list);
+        }
+        var seasonId = board == "season" && SeasonPick.SelectedIndex >= 0 && SeasonPick.SelectedIndex < seasonIds.Count ? seasonIds[SeasonPick.SelectedIndex] : null;
+
+        LbSub.Text = "Loading…";
+        var res = await Online.Leaderboard(board, seasonId);
+        if (res == null)
+        {
+            LbSub.Text = "Couldn't reach the Trophyline server. Check your internet connection and press Refresh.";
+            return;
+        }
+        var rows = res["rows"]?.AsArray() ?? [];
+        LbSub.Text = $"{L(res["players"]):N0} players on Trophyline  ·  click someone to see their profile";
+        var me = Online.MyId;
+        LbRows.Children.Clear();
+        foreach (var r in rows)
+            LbRows.Children.Add(LeaderRow((int)L(r?["pos"]), S(r?["id"]), S(r?["name"]), (int)L(r?["level"]), S(r?["rank"]), S(r?["icon"]), L(r?["value"]), S(r?["id"]) == me));
+        if (res["me"] is JsonNode mine && !rows.Any(r => S(r?["id"]) == me))
+        {
+            LbRows.Children.Add(new TextBlock { Text = "…", Foreground = Res("Muted"), HorizontalAlignment = HorizontalAlignment.Center });
+            LbRows.Children.Add(LeaderRow((int)L(mine["pos"]), me, Program.Settings().OnlineName, xp?.Level ?? 1, Xp.RankFor(xp?.Level ?? 1).Title,
+                                          Shop.Load().Equipped, L(mine["value"]), true));
+        }
+        if (board == "season" && (seasonId == null || seasonId == season.Id))
+            MySeasonPlace.Text = res["me"] is JsonNode m2 ? $"#{L(m2["pos"])} this season" : Online.Enabled ? "earn XP to get on the board" : "not on the leaderboards";
+        LbEmpty.IsVisible = rows.Count == 0;
+        LbEmpty.Text = "Nobody here yet. Be the first!";
+    }
+
+    void BuildSeasonHistory(JsonArray seasons)
+    {
+        SeasonHistory.Children.Clear();
+        foreach (var s in seasons)
+        {
+            var sp = new StackPanel { Spacing = 6 };
+            sp.Children.Add(new TextBlock { Text = $"{S(s?["name"])}  ·  {S(s?["label"])}" + (s?["current"]?.GetValue<bool>() == true ? "  (now)" : ""), FontWeight = FontWeight.SemiBold });
+            var top = s?["top"]?.AsArray() ?? [];
+            if (top.Count == 0) sp.Children.Add(new TextBlock { Text = "no champions yet", Foreground = Res("Muted"), FontSize = 12 });
+            string[] medals = ["#F5C451", "#C9D6E3", "#D08A5B"];
+            for (int i = 0; i < top.Count; i++)
+            {
+                var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+                row.Children.Add(new TextBlock { Text = $"{i + 1}.", Foreground = Fmt.Brush(medals[i]), FontWeight = FontWeight.Bold, Width = 18 });
+                row.Children.Add(new TextBlock { Text = S(top[i]?["name"]), MaxWidth = 150, TextTrimming = TextTrimming.CharacterEllipsis });
+                row.Children.Add(new TextBlock { Text = $"{L(top[i]?["value"]):N0} XP", Foreground = Res("Muted"), FontSize = 12, VerticalAlignment = VerticalAlignment.Center });
+                sp.Children.Add(row);
+            }
+            var card = new Border { Child = sp, Padding = new Thickness(16, 12), Margin = new Thickness(0, 0, 12, 12), Width = 290 };
+            card.Classes.Add("card");
+            SeasonHistory.Children.Add(card);
+        }
+    }
+
+    Control LeaderRow(int pos, string id, string name, int level, string rank, string icon, long value, bool isMe)
+    {
+        string[] medals = ["#F5C451", "#C9D6E3", "#D08A5B"];
+        var posText = new TextBlock
+        {
+            Text = $"#{pos}", FontSize = pos <= 3 ? 20 : 16, FontWeight = FontWeight.Bold, Width = 56, VerticalAlignment = VerticalAlignment.Center,
+            Foreground = pos <= 3 ? Fmt.Brush(medals[pos - 1]) : Res("Muted"),
+        };
+        var (rankTitle, rankColor) = Xp.RankFor(level);
+        rank = rankTitle; // always from the level, whatever the server says
+        var who = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(14, 0) };
+        who.Children.Add(new TextBlock { Text = name + (isMe ? "  (you)" : ""), FontWeight = FontWeight.SemiBold, FontSize = 15, TextTrimming = TextTrimming.CharacterEllipsis });
+        who.Children.Add(new TextBlock { Text = $"Level {level}  ·  {rank}", FontSize = 12, Foreground = Fmt.Brush(rankColor) });
+        var val = new TextBlock { Text = BoardValue(value), FontSize = 17, FontWeight = FontWeight.SemiBold, VerticalAlignment = VerticalAlignment.Center };
+        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,Auto,*,Auto") };
+        var avatar = Avatar(icon, name, 42, Fmt.Brush(rankColor));
+        Grid.SetColumn(avatar, 1); Grid.SetColumn(who, 2); Grid.SetColumn(val, 3);
+        grid.Children.Add(posText); grid.Children.Add(avatar); grid.Children.Add(who); grid.Children.Add(val);
+        var card = new Border { Child = grid, Padding = new Thickness(16, 10), CornerRadius = new CornerRadius(12) };
+        card.Classes.Add("card"); card.Classes.Add("row");
+        if (isMe) { card.BorderBrush = Palette.Brush; card.BorderThickness = new Thickness(2); }
+        var b = new Button { Content = card, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch };
+        b.Classes.Add("plain");
+        b.Click += (_, _) => OpenPlayer(id);
+        return b;
+    }
+
+    /// A round profile picture: the equipped shop icon, or the first letter of the name.
+    static Control Avatar(string? iconId, string name, double size, IBrush ring)
+    {
+        var icon = Shop.Find(iconId);
+        Control inner = icon != null
+            ? new TextBlock { Text = icon.Glyph, FontSize = size * 0.5, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center }
+            : new TextBlock
+            {
+                Text = name.Length > 0 ? char.ToUpper(name[0]).ToString() : "?", FontSize = size * 0.42, FontWeight = FontWeight.Bold,
+                Foreground = Brushes.White, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center,
+            };
+        return new Border
+        {
+            Width = size, Height = size, CornerRadius = new CornerRadius(size / 2),
+            Background = icon != null ? Fmt.Tint(Fmt.Brush(icon.Color), 0x30) : Res("AccentAvatar"),
+            BorderBrush = icon != null ? Fmt.Brush(icon.Color) : ring, BorderThickness = new Thickness(Math.Max(2, size / 22)),
+            Child = inner,
+        };
+    }
+
+    void UpdateAvatar()
+    {
+        var icon = Shop.Find(Shop.Load().Equipped);
+        var name = data?.PersonaName ?? "?";
+        AvatarLetter.Text = icon?.Glyph ?? (name.Length > 0 ? char.ToUpper(name[0]).ToString() : "?");
+        AvatarLetter.FontSize = icon != null ? 21 : 17;
+    }
+
+    // ----- someone's profile -----
+
+    void PlayerBack_Click(object? sender, RoutedEventArgs e) => NavLeaderboard.IsChecked = true;
+
+    async void OpenPlayer(string id)
+    {
+        ShowPage(PlayerPage);
+        PlayerBody.Children.Clear();
+        PlayerBody.Children.Add(new TextBlock { Text = "Loading profile…", Foreground = Res("Muted") });
+        var p = await Online.Player(id);
+        PlayerBody.Children.Clear();
+        if (p == null) { PlayerBody.Children.Add(new TextBlock { Text = "Couldn't load this profile.", Foreground = Res("Muted") }); return; }
+
+        var name = S(p["name"]);
+        int level = (int)L(p["level"]);
+        var (rank, rankHex) = Xp.RankFor(level);
+        var prof = p["profile"];
+
+        // header
+        var head = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 22 };
+        head.Children.Add(Avatar(S(prof?["icon"]), name, 96, Fmt.Brush(rankHex)));
+        var ht = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+        ht.Children.Add(new TextBlock { Text = name + (id == Online.MyId ? "  (you)" : ""), FontSize = 32, FontWeight = FontWeight.Bold });
+        ht.Children.Add(new TextBlock { Text = $"Level {level}  ·  {rank}", FontSize = 16, FontWeight = FontWeight.SemiBold, Foreground = Fmt.Brush(rankHex) });
+        ht.Children.Add(new TextBlock
+        {
+            Text = $"On Trophyline since {Fmt.Local(L(p["created"])):dd.MM.yyyy}  ·  updated {Fmt.Ago(L(p["updated"]))}",
+            Foreground = Res("Muted"), FontSize = 13, Margin = new Thickness(0, 4, 0, 0),
+        });
+        if (id != Online.MyId)
+        {
+            var msg = new Button { Content = new TextBlock { Text = "Message" }, Margin = new Thickness(0, 10, 0, 0), HorizontalAlignment = HorizontalAlignment.Left };
+            msg.Classes.Add("pill");
+            msg.Click += async (_, _) => await OpenChat(id, name);
+            ht.Children.Add(msg);
+        }
+        head.Children.Add(ht);
+        PlayerBody.Children.Add(head);
+
+        var places = p["places"];
+        var season = p["season"];
+        var tiles = new Avalonia.Controls.Primitives.UniformGrid { Columns = 3, Margin = new Thickness(-8, 18, -8, 0) };
+        tiles.Children.Add(Tile("IconShield", $"{L(p["xp"]):N0}", "total XP", $"#{L(places?["xp"])} on the XP board", Palette.Brush));
+        tiles.Children.Add(Tile("IconPodium", $"{L(season?["xp"]):N0}", "season XP", $"{S(season?["name"])} · {S(season?["label"])}", Fmt.Purple));
+        tiles.Children.Add(Tile("IconStar", $"{L(p["perfect"])}", "completed games", $"#{L(places?["perfect"])} on the completion board", Fmt.Gold));
+        tiles.Children.Add(Tile("IconChart", $"{L(p["over75"])}", "games over 75%", $"#{L(places?["over75"])} on that board", Fmt.Green));
+        tiles.Children.Add(Tile("IconStar", $"{L(p["unlocked"]):N0}", "achievements", $"in {L(p["games"])} games", Palette.Brush));
+        tiles.Children.Add(Tile("IconClock", $"{L(p["hours"]):N0} h", "played", "on Steam", Fmt.Orange));
+        PlayerBody.Children.Add(tiles);
+
+        // top games
+        var topGames = prof?["topGames"]?.AsArray() ?? [];
+        if (topGames.Count > 0)
+        {
+            PlayerBody.Children.Add(new TextBlock { Text = "Best games", FontSize = 17, FontWeight = FontWeight.SemiBold, Margin = new Thickness(0, 22, 0, 12) });
+            var wrap = new WrapPanel();
+            foreach (var g in topGames)
+            {
+                var appId = S(g?["appId"]);
+                long un = L(g?["unlocked"]), tot = Math.Max(1, L(g?["total"]));
+                var img = new Image { Stretch = Stretch.UniformToFill };
+                _ = LoadHeader(img, appId);
+                var sp = new StackPanel();
+                sp.Children.Add(new Border { Height = 98, ClipToBounds = true, Background = Res("CardHi"), Child = img, CornerRadius = new CornerRadius(10, 10, 0, 0) });
+                var info = new StackPanel { Margin = new Thickness(12, 8, 12, 12), Spacing = 4 };
+                info.Children.Add(new TextBlock { Text = S(g?["name"]), FontWeight = FontWeight.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis });
+                info.Children.Add(new TextBlock { Text = $"{un} / {tot}  ·  {100.0 * un / tot:0}%", FontSize = 12, Foreground = un == tot ? Fmt.Gold : Res("Muted") });
+                var bar = new ProgressBar { Value = (double)un / tot, Background = Res("Line"), Foreground = un == tot ? Fmt.Gold : Palette.Brush };
+                bar.Classes.Add("thin");
+                info.Children.Add(bar);
+                sp.Children.Add(info);
+                var card = new Border { Child = sp, Width = 210, Margin = new Thickness(0, 0, 14, 14), Padding = new Thickness(0), ClipToBounds = true };
+                card.Classes.Add("card");
+                wrap.Children.Add(card);
+            }
+            PlayerBody.Children.Add(wrap);
+        }
+
+        // latest unlocks
+        var recent = prof?["recent"]?.AsArray() ?? [];
+        if (recent.Count > 0)
+        {
+            PlayerBody.Children.Add(new TextBlock { Text = "Latest unlocks", FontSize = 17, FontWeight = FontWeight.SemiBold, Margin = new Thickness(0, 12, 0, 12) });
+            foreach (var a in recent)
+            {
+                var appId = S(a?["appId"]);
+                var iconName = S(a?["icon"]);
+                var img = new Image { Stretch = Stretch.UniformToFill };
+                if (iconName.Length > 0)
+                {
+                    var u = new Unlock(null, "", appId, "", "", "", iconName);
+                    _ = Task.Run(async () => await Img.Cached(IconCache.RemoteUrl(u), IconCache.LocalPath(u), 96))
+                        .ContinueWith(t => Dispatcher.UIThread.Post(() => img.Source = t.Result));
+                }
+                double? rarity = a?["rarity"] is JsonNode rn && rn.GetValueKind() == System.Text.Json.JsonValueKind.Number ? rn.GetValue<double>() : null;
+                var row = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,Auto") };
+                row.Children.Add(new Border { Width = 48, Height = 48, CornerRadius = new CornerRadius(8), ClipToBounds = true, Background = Res("Line"), Child = img });
+                var t2 = new StackPanel { Margin = new Thickness(14, 0), VerticalAlignment = VerticalAlignment.Center };
+                t2.Children.Add(new TextBlock { Text = S(a?["name"]), FontWeight = FontWeight.SemiBold });
+                t2.Children.Add(new TextBlock { Text = $"{S(a?["game"])}  ·  {Fmt.Ago(L(a?["time"]))}", FontSize = 12, Foreground = Res("Muted") });
+                Grid.SetColumn(t2, 1);
+                row.Children.Add(t2);
+                var right = new TextBlock
+                {
+                    Text = (rarity is double r ? $"{r:0.#}%  ·  " : "") + $"+{Xp.ForAchievement(rarity)} XP",
+                    FontSize = 13, FontWeight = FontWeight.SemiBold, VerticalAlignment = VerticalAlignment.Center,
+                    Foreground = rarity is < 10 ? Fmt.Gold : Palette.Brush,
+                };
+                Grid.SetColumn(right, 2);
+                row.Children.Add(right);
+                var card = new Border { Child = row, Padding = new Thickness(10), Margin = new Thickness(0, 0, 0, 8), CornerRadius = new CornerRadius(12) };
+                card.Classes.Add("card");
+                PlayerBody.Children.Add(card);
+            }
+        }
+    }
+
+    async Task LoadHeader(Image img, string appId)
+    {
+        var mine = games.FirstOrDefault(g => g.G.AppId == appId)?.HeaderImage;
+        if (mine != null) { img.Source = mine; return; }
+        img.Source = await Img.Cached($"https://cdn.akamai.steamstatic.com/steam/apps/{appId}/header.jpg",
+                                      System.IO.Path.Combine(Program.Home, "webcache", $"header_{appId}.jpg"), 420);
+    }
+
+    // =============== shop ===============
+
+    void BuildShop()
+    {
+        var s = Shop.Load();
+        int level = xp?.Level ?? 1;
+        long balance = Shop.Balance(s, level);
+        CoinBalance.Text = $"{balance:N0} coins";
+        CoinSub.Text = $"Level {level}  ·  level {level + 1} gives you {Shop.CoinsForLevel(level + 1)} more  ·  {Shop.Earned(level):N0} earned, {s.Spent:N0} spent";
+        EquippedPreview.Children.Clear();
+        EquippedPreview.Children.Add(Avatar(s.Equipped, data?.PersonaName ?? "?", 58, Palette.Brush));
+
+        ShopTiers.Children.Clear();
+        foreach (var (tier, hex, price) in Shop.Tiers)
+        {
+            var color = Fmt.Brush(hex);
+            var head = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10, Margin = new Thickness(0, 18, 0, 12) };
+            head.Children.Add(new TextBlock { Text = tier, FontSize = 17, FontWeight = FontWeight.SemiBold, Foreground = color });
+            head.Children.Add(new TextBlock { Text = $"{price:N0} coins each", Foreground = Res("Muted"), FontSize = 13, VerticalAlignment = VerticalAlignment.Center });
+            ShopTiers.Children.Add(head);
+            var wrap = new WrapPanel();
+            foreach (var icon in Shop.Icons.Where(i => i.Tier == tier))
+                wrap.Children.Add(ShopCard(icon, s, level, balance));
+            ShopTiers.Children.Add(wrap);
+        }
+    }
+
+    Control ShopCard(ShopIcon icon, Shop.State s, int level, long balance)
+    {
+        bool owned = s.Owned.Contains(icon.Id), equipped = owned && s.Equipped == icon.Id, locked = level < icon.MinLevel;
+        var color = Fmt.Brush(icon.Color);
+        var sp = new StackPanel { Spacing = 6, HorizontalAlignment = HorizontalAlignment.Center };
+        var pic = new Border
+        {
+            Width = 76, Height = 76, CornerRadius = new CornerRadius(38), Background = Fmt.Tint(color, 0x26), BorderBrush = color,
+            BorderThickness = new Thickness(3), HorizontalAlignment = HorizontalAlignment.Center, Opacity = locked ? 0.45 : 1,
+            Child = new TextBlock { Text = icon.Glyph, FontSize = 36, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center },
+        };
+        sp.Children.Add(pic);
+        sp.Children.Add(new TextBlock { Text = icon.Name, FontWeight = FontWeight.SemiBold, HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 4, 0, 0) });
+
+        string label = equipped ? "Unequip" : owned ? "Equip" : locked ? $"Level {icon.MinLevel}" : $"{icon.Price:N0} coins";
+        var btn = new Button { HorizontalAlignment = HorizontalAlignment.Center, Content = new TextBlock { Text = label } };
+        btn.Classes.Add("pill");
+        btn.IsEnabled = owned || (!locked && balance >= icon.Price);
+        if (!owned && !locked && balance < icon.Price) ToolTip.SetTip(btn, $"You need {icon.Price - balance:N0} more coins");
+        btn.Click += async (_, _) =>
+        {
+            if (equipped) Shop.Equip("");
+            else if (owned) Shop.Equip(icon.Id);
+            else
+            {
+                var err = Shop.Buy(icon, level);
+                ShopMessage.IsVisible = true;
+                ShopMessage.Text = err ?? $"Bought {icon.Glyph} {icon.Name}, and it's on your profile now!";
+                ShopMessage.Foreground = err == null ? Fmt.Gold : Fmt.Orange;
+            }
+            BuildShop();
+            UpdateAvatar();
+            if (Online.Enabled) await UploadNow();
+        };
+        sp.Children.Add(btn);
+        if (equipped) sp.Children.Add(new TextBlock { Text = "EQUIPPED", FontSize = 10, FontWeight = FontWeight.Bold, Foreground = color, HorizontalAlignment = HorizontalAlignment.Center });
+
+        var card = new Border { Child = sp, Width = 150, Padding = new Thickness(12, 16), Margin = new Thickness(0, 0, 12, 12) };
+        card.Classes.Add("card");
+        if (equipped) { card.BorderBrush = color; card.BorderThickness = new Thickness(2); }
+        return card;
     }
 
     Control XpRow(string text, string? sub, string worth, bool gain)
@@ -1010,7 +1440,171 @@ public partial class MainWindow : Window
 
     // =============== navigation ===============
 
-    Control[] AllPages => [OverviewPage, AchievementsPage, GamesPage, GamePage, LevelPage, PlaytimePage, StoragePage, MusicPage, SettingsPage];
+    // =============== chat ===============
+
+    readonly DispatcherTimer chatTimer = new() { Interval = TimeSpan.FromSeconds(4) };
+    string? chatWith;            // null = lobby
+    string chatWithName = "";
+    long chatLast;               // newest message id shown
+    bool chatBusy, chatBlocked;
+
+    async Task OpenChat(string? with, string name)
+    {
+        chatWith = with;
+        chatWithName = name;
+        chatLast = 0;
+        ChatMessages.Children.Clear();
+        if (NavChat.IsChecked != true) NavChat.IsChecked = true; // shows the page and refreshes
+        else await RefreshChat(full: true);
+    }
+
+    async Task RefreshChat(bool full)
+    {
+        if (chatBusy) return;
+        chatBusy = true;
+        try
+        {
+            chatTimer.Start();
+            bool canWrite = Online.Enabled;
+            ChatInput.IsEnabled = canWrite;
+            ChatInput.Watermark = !Online.Available ? "Chat needs the Trophyline server, which isn't set up yet."
+                : canWrite ? (chatWith == null ? "Write to everyone…" : $"Write to {chatWithName}…")
+                : "Join the leaderboards (Leaderboards page) to write messages.";
+            if (!Online.Available) { ChatTitle.Text = "Lobby"; ChatTitleSub.Text = "offline"; return; }
+
+            ChatTitle.Text = chatWith == null ? "Lobby" : chatWithName;
+            ChatTitleSub.Text = chatWith == null ? "everyone on Trophyline · be nice" : "private conversation";
+            ChatProfileButton.IsVisible = ChatBlockButton.IsVisible = chatWith != null;
+
+            if (full) await BuildChatRooms();
+
+            JsonNode? res = chatWith == null ? await Online.Lobby(chatLast)
+                          : canWrite ? await Online.Dm(chatWith, chatLast) : null;
+            var msgs = res?["messages"]?.AsArray() ?? [];
+            bool atBottom = ChatScroll.Offset.Y >= ChatScroll.Extent.Height - ChatScroll.Viewport.Height - 40;
+            foreach (var m in msgs)
+            {
+                chatLast = Math.Max(chatLast, L(m?["id"]));
+                ChatMessages.Children.Add(ChatBubble(m));
+            }
+            if (ChatMessages.Children.Count == 0)
+                ChatMessages.Children.Add(new TextBlock { Text = chatWith == null ? "No messages yet. Say hi!" : "No messages yet.", Foreground = Res("Muted"), Tag = "empty" });
+            else if (ChatMessages.Children.Count > 1 && ChatMessages.Children[0] is TextBlock { Tag: "empty" } e) ChatMessages.Children.Remove(e);
+            if (msgs.Count > 0 && (full || atBottom))
+                Dispatcher.UIThread.Post(() => ChatScroll.ScrollToEnd(), DispatcherPriority.Background);
+        }
+        finally { chatBusy = false; }
+    }
+
+    async Task BuildChatRooms()
+    {
+        ChatRooms.Children.Clear();
+        ChatRooms.Children.Add(ChatRoomButton(null, "Lobby", "everyone", "", chatWith == null));
+        if (!Online.Enabled) return;
+        var inbox = await Online.Inbox();
+        var convs = inbox?["conversations"]?.AsArray() ?? [];
+        if (convs.Count > 0)
+            ChatRooms.Children.Add(new TextBlock { Text = "PRIVATE", FontSize = 11, FontWeight = FontWeight.Bold, Foreground = Res("Muted"), Margin = new Thickness(10, 12, 0, 4) });
+        bool listed = false;
+        foreach (var c in convs)
+        {
+            var id = S(c?["id"]);
+            var last = c?["last"];
+            var preview = (S(last?["sender"]) == Online.MyId ? "You: " : "") + S(last?["text"]);
+            if (id == chatWith) { listed = true; chatBlocked = c?["blocked"]?.GetValue<bool>() == true; }
+            ChatRooms.Children.Add(ChatRoomButton(id, S(c?["name"]), preview, S(c?["icon"]), id == chatWith));
+        }
+        if (chatWith != null && !listed)
+        {
+            chatBlocked = false;
+            ChatRooms.Children.Add(ChatRoomButton(chatWith, chatWithName, "new conversation", "", true));
+        }
+        ChatBlockText.Text = chatBlocked ? "Unblock" : "Block";
+    }
+
+    Control ChatRoomButton(string? id, string name, string sub, string icon, bool active)
+    {
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 };
+        row.Children.Add(id == null
+            ? new Border { Width = 34, Height = 34, CornerRadius = new CornerRadius(17), Background = Fmt.Tint(Palette.Brush, 0x30),
+                           Child = new PathIcon { Data = Icon("IconChat"), Width = 16, Height = 16, Foreground = Palette.Brush } }
+            : Avatar(icon, name, 34, Res("Line")));
+        var t = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Width = 170 };
+        t.Children.Add(new TextBlock { Text = name, FontWeight = FontWeight.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis });
+        t.Children.Add(new TextBlock { Text = sub, FontSize = 12, Foreground = Res("Muted"), TextTrimming = TextTrimming.CharacterEllipsis });
+        row.Children.Add(t);
+        var bd = new Border { Child = row, Padding = new Thickness(10, 8), CornerRadius = new CornerRadius(10), Background = active ? Res("CardHi") : Brushes.Transparent };
+        var b = new Button { Content = bd, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch };
+        b.Classes.Add("plain");
+        b.Click += async (_, _) => await OpenChat(id, name);
+        return b;
+    }
+
+    Control ChatBubble(JsonNode? m)
+    {
+        var sender = S(m?["sender"]);
+        bool mine = sender == Online.MyId;
+        var name = S(m?["name"]);
+        int level = (int)Math.Max(1, L(m?["level"]));
+        var (_, rankHex) = Xp.RankFor(level);
+
+        var head = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        head.Children.Add(new TextBlock { Text = mine ? "You" : name, FontWeight = FontWeight.SemiBold, FontSize = 13 });
+        head.Children.Add(new TextBlock { Text = $"Lv {level}", FontSize = 11, Foreground = Fmt.Brush(rankHex), VerticalAlignment = VerticalAlignment.Center });
+        var when = Fmt.Local(L(m?["time"]));
+        head.Children.Add(new TextBlock { Text = when.Date == DateTime.Today ? when.ToString("HH:mm") : when.ToString("dd.MM HH:mm"), FontSize = 11, Foreground = Res("Muted"), VerticalAlignment = VerticalAlignment.Center });
+
+        var bubble = new Border
+        {
+            CornerRadius = new CornerRadius(12), Padding = new Thickness(12, 8), MaxWidth = 620, HorizontalAlignment = HorizontalAlignment.Left,
+            Background = mine ? Fmt.Tint(Palette.Brush, 0x33) : Res("CardHi"),
+            Child = new SelectableTextBlock { Text = S(m?["text"]), TextWrapping = TextWrapping.Wrap, FontSize = 14 },
+        };
+        var col = new StackPanel { Spacing = 4 };
+        col.Children.Add(head);
+        col.Children.Add(bubble);
+
+        var avatar = Avatar(S(m?["icon"]), name, 36, Fmt.Brush(rankHex));
+        avatar.VerticalAlignment = VerticalAlignment.Top;
+        if (!mine)
+        {
+            avatar.Cursor = new Cursor(StandardCursorType.Hand);
+            avatar.PointerPressed += (_, _) => OpenPlayer(sender);
+            ToolTip.SetTip(avatar, $"{name}'s profile");
+        }
+        var row = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 };
+        row.Children.Add(avatar);
+        row.Children.Add(col);
+        return row;
+    }
+
+    async Task SendChat()
+    {
+        var text = (ChatInput.Text ?? "").Trim();
+        if (text.Length == 0 || !Online.Enabled) return;
+        ChatInput.Text = "";
+        var err = await Online.SendChat(text, chatWith);
+        if (err != null) { ChatInput.Text = text; ChatTitleSub.Text = err; return; }
+        await RefreshChat(full: chatWith != null && ChatRooms.Children.Count <= 2);
+        ChatScroll.ScrollToEnd();
+    }
+
+    async void ChatSend_Click(object? sender, RoutedEventArgs e) => await SendChat();
+
+    void ChatProfile_Click(object? sender, RoutedEventArgs e) { if (chatWith != null) OpenPlayer(chatWith); }
+
+    async void ChatBlock_Click(object? sender, RoutedEventArgs e)
+    {
+        if (chatWith == null) return;
+        var err = await Online.Block(chatWith, !chatBlocked);
+        if (err != null) { ChatTitleSub.Text = err; return; }
+        chatBlocked = !chatBlocked;
+        ChatBlockText.Text = chatBlocked ? "Unblock" : "Block";
+        ChatTitleSub.Text = chatBlocked ? $"Blocked: {chatWithName} can't message you, and you won't see their messages." : "private conversation";
+        if (chatBlocked) { chatLast = 0; ChatMessages.Children.Clear(); await RefreshChat(full: true); }
+    }
+
+    Control[] AllPages => [OverviewPage, AchievementsPage, GamesPage, GamePage, LevelPage, LeaderboardPage, PlayerPage, ChatPage, ShopPage, PlaytimePage, StoragePage, MusicPage, SettingsPage];
 
     Control? VisiblePage() => AllPages.FirstOrDefault(p => p.IsVisible);
 
@@ -1019,7 +1613,7 @@ public partial class MainWindow : Window
         if (page != GamePage) currentGame = null;
         foreach (var p in AllPages) p.IsVisible = p == page;
         var nav = page == OverviewPage ? NavOverview : page == AchievementsPage ? NavAchievements
-                : page == StoragePage ? NavStorage : page == PlaytimePage ? NavPlaytime : page == LevelPage ? NavLevel : page == MusicPage ? NavMusic : page == SettingsPage ? NavSettings : NavGames;
+                : page == StoragePage ? NavStorage : page == PlaytimePage ? NavPlaytime : page == LevelPage ? NavLevel : page == LeaderboardPage || page == PlayerPage ? NavLeaderboard : page == ShopPage ? NavShop : page == ChatPage ? NavChat : page == MusicPage ? NavMusic : page == SettingsPage ? NavSettings : NavGames;
         if (nav.IsChecked != true)
         {
             syncingNav = true;
@@ -1078,6 +1672,16 @@ public partial class MainWindow : Window
             case "storage": NavStorage.IsChecked = true; break;
             case "playtime": NavPlaytime.IsChecked = true; break;
             case "level": NavLevel.IsChecked = true; break;
+            case "shop": NavShop.IsChecked = true; break;
+            case "chat":
+                if (arg != null) _ = OpenChat(arg, "NightOwl"); else NavChat.IsChecked = true;
+                break;
+            case "leaderboard":
+                if (arg is "xp" or "perfect" or "over75") board = arg;
+                NavLeaderboard.IsChecked = true;
+                if (arg == "xp") BoardXp.IsChecked = true;
+                break;
+            case "player": if (arg != null) OpenPlayer(arg); break;
             case "settings":
                 NavSettings.IsChecked = true;
                 if (arg != null) PickAccent(arg);

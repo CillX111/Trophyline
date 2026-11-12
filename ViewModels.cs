@@ -116,9 +116,10 @@ public sealed class AchVM(AchievementInfo a, GameInfo g) : Notify
     public AchievementInfo A { get; } = a;
     public GameInfo G { get; } = g;
 
-    public string Name => A.Name;
-    public string Description => A.Hidden && !A.Unlocked && A.Description.Length > 0
-        ? "Hidden achievement: keep playing to find out." : A.Description;
+    /// Secret (hidden) achievements you haven't unlocked stay secret: no name, no description, no picture.
+    public bool Secret => A.Hidden && !A.Unlocked;
+    public string Name => Secret ? "Secret achievement" : A.Name;
+    public string Description => Secret ? "" : A.Description;
     public bool HasDescription => Description.Length > 0;
     public string Game => G.Name;
     public bool ShowGame { get; set; } = true;
@@ -160,6 +161,7 @@ public sealed class AchVM(AchievementInfo a, GameInfo g) : Notify
 
     async Task LoadIcon()
     {
+        if (Secret) return; // a lock instead of the real picture
         var file = A.Unlocked ? A.Icon : A.IconGray;
         if (file.Length == 0) return;
         var url = $"https://cdn.akamai.steamstatic.com/steamcommunity/public/images/apps/{A.AppId}/{file}";
@@ -169,7 +171,7 @@ public sealed class AchVM(AchievementInfo a, GameInfo g) : Notify
         await Dispatcher.UIThread.InvokeAsync(() => { icon = bmp; Raise(nameof(Icon)); });
     }
 
-    public string SearchText => searchText ??= $"{G.Name} {A.Name} {A.Description}".ToLowerInvariant();
+    public string SearchText => searchText ??= $"{G.Name} {Name} {Description}".ToLowerInvariant();
     string? searchText;
 }
 

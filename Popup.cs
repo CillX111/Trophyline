@@ -56,10 +56,11 @@ static class Popup
         try
         {
             int seen = Xp.LastSeenLevel();
-            if (seen == 0) return null; // the window sets the starting level the first time it opens
+            if (seen == 0 && !Online.Enabled) return null; // the window sets the starting level the first time it opens
             var data = SteamData.Load(Program.ReadLanguage());
             var r = Xp.Compute(data.Games, SessionLog.Load());
-            if (r.Level <= seen) return null;
+            PendingUpload = Task.Run(() => Online.Upload(data.Games, r, force: true)); // keep the leaderboards current
+            if (seen == 0 || r.Level <= seen) return null;
             Xp.MarkSeen(r.Level);
             return new PopupItem(LevelUpId, Xp.RankFor(r.Level).Title, $"Level {r.Level}", $"{r.Total:N0} XP in total", "", null);
         }
@@ -67,6 +68,9 @@ static class Popup
     }
 
     public const string LevelUpId = "levelup";
+
+    /// The leaderboard upload started for this pop-up; the pop-up waits for it before exiting.
+    public static Task? PendingUpload;
 
     public static List<PopupItem> Read(string file)
     {
@@ -145,6 +149,8 @@ public sealed class PopupWindow : Window
                 await Task.Delay(350);
             }
             catch (Exception ex) { Program.LogError("popup: " + ex); }
+            Hide();
+            if (Popup.PendingUpload is Task up) await Task.WhenAny(up, Task.Delay(12000));
             Close();
         };
     }

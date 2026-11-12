@@ -1,0 +1,10 @@
+name = "trophyline"
+main = "src/index.js"
+compatibility_date = "2025-10-01"
+
+# Created with:  npx wrangler d1 create trophyline
+# then paste the database_id it prints here.
+[[d1_databases]]
+binding = "DB"
+database_name = "trophyline"
+database_id = "00000000-0000-0000-0000-000000000000"

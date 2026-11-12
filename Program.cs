@@ -287,6 +287,13 @@ public sealed class Config
     public bool PauseSoundtrackOnQuit { get; set; } = true;
     /// Show a pop-up in the corner of the screen when you unlock an achievement.
     public bool UnlockPopups { get; set; } = true;
+    /// Online leaderboards (off until you switch them on).
+    public bool OnlineEnabled { get; set; }
+    public string OnlineName { get; set; } = "";
+    public string OnlineId { get; set; } = "";
+    public string OnlineSecret { get; set; } = "";
+    /// Leave empty to use the public Trophyline server.
+    public string Server { get; set; } = "";
     /// Accent colour of the window, e.g. "#66C0F4".
     public string Accent { get; set; } = Palette.Default;
 }

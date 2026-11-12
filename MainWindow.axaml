@@ -159,6 +159,7 @@
                     <RadioButton x:Name="NavOverview" Classes="nav" GroupName="nav" Tag="{StaticResource IconHome}" Content="Overview" IsChecked="True"/>
                     <RadioButton x:Name="NavAchievements" Classes="nav" GroupName="nav" Tag="{StaticResource IconStar}" Content="Achievements"/>
                     <RadioButton x:Name="NavGames" Classes="nav" GroupName="nav" Tag="{StaticResource IconGame}" Content="Games"/>
+                    <RadioButton x:Name="NavPlaytime" Classes="nav" GroupName="nav" Tag="{StaticResource IconClock}" Content="Playtime"/>
                     <RadioButton x:Name="NavStorage" Classes="nav" GroupName="nav" Tag="{StaticResource IconDrive}" Content="Storage"/>
                     <RadioButton x:Name="NavMusic" Classes="nav" GroupName="nav" Tag="{StaticResource IconMusic}" Content="Music"/>
                     <RadioButton x:Name="NavSettings" Classes="nav" GroupName="nav" Tag="{StaticResource IconSettings}" Content="Settings"/>
@@ -522,6 +523,67 @@
                 </ScrollViewer>
             </Grid>
 
+            <!-- Playtime (sessions recorded by the tracker) -->
+            <ScrollViewer x:Name="PlaytimePage" IsVisible="False">
+                <StackPanel Margin="30,26,30,30">
+                    <TextBlock Text="Playtime" Classes="pageTitle"/>
+                    <TextBlock x:Name="PlaytimeSub" Classes="muted" Margin="0,4,0,0" TextWrapping="Wrap"/>
+
+                    <Border x:Name="NowPlayingCard" Classes="card" Margin="0,18,0,0" Padding="0" ClipToBounds="True" IsVisible="False"
+                            BorderBrush="{DynamicResource Accent}">
+                        <Grid ColumnDefinitions="Auto,*">
+                            <Image x:Name="NowPlayingImage" Width="220" Height="103" Stretch="UniformToFill"/>
+                            <StackPanel Grid.Column="1" Margin="20,0" VerticalAlignment="Center">
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <Ellipse Width="8" Height="8" Fill="{StaticResource Green}" VerticalAlignment="Center"/>
+                                    <TextBlock Text="PLAYING NOW" Foreground="{StaticResource Green}" FontSize="11" FontWeight="Bold"/>
+                                </StackPanel>
+                                <TextBlock x:Name="NowPlayingName" FontSize="22" FontWeight="Bold" Margin="0,4,0,0" TextTrimming="CharacterEllipsis"/>
+                                <TextBlock x:Name="NowPlayingSub" Classes="muted" FontSize="14"/>
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+
+                    <UniformGrid x:Name="PlaytimeTiles" Columns="4" Margin="-8,10,-8,0"/>
+
+                    <Border Classes="card" Padding="20,18" Margin="0,10,0,0">
+                        <StackPanel>
+                            <DockPanel>
+                                <TextBlock x:Name="ChartTotal" DockPanel.Dock="Right" Classes="muted" VerticalAlignment="Center"/>
+                                <TextBlock Text="Last 14 days" Classes="section"/>
+                            </DockPanel>
+                            <Canvas x:Name="PlayChart" Height="190" Margin="0,16,0,0" HorizontalAlignment="Left"/>
+                        </StackPanel>
+                    </Border>
+
+                    <TextBlock Text="Recent sessions" Classes="section" Margin="0,24,0,12"/>
+                    <ItemsControl x:Name="SessionList">
+                        <ItemsControl.ItemTemplate>
+                            <DataTemplate DataType="local:SessionVM">
+                                <Button Classes="plain" Click="OpenSessionGame_Click" Margin="0,0,0,8" HorizontalAlignment="Stretch"
+                                        HorizontalContentAlignment="Stretch">
+                                    <Border Classes="card row" CornerRadius="12" Padding="10">
+                                        <Grid ColumnDefinitions="Auto,*,Auto">
+                                            <Border Width="120" Height="56" CornerRadius="8" Background="{StaticResource CardHi}" ClipToBounds="True">
+                                                <Image Source="{Binding Header}" Stretch="UniformToFill"/>
+                                            </Border>
+                                            <StackPanel Grid.Column="1" Margin="16,0" VerticalAlignment="Center">
+                                                <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="15" TextTrimming="CharacterEllipsis"/>
+                                                <TextBlock Text="{Binding When}" Classes="muted" FontSize="13" Margin="0,2,0,0"/>
+                                            </StackPanel>
+                                            <TextBlock Grid.Column="2" Text="{Binding Duration}" FontSize="18" FontWeight="SemiBold"
+                                                       VerticalAlignment="Center" MinWidth="90" TextAlignment="Right" Margin="0,0,8,0"/>
+                                        </Grid>
+                                    </Border>
+                                </Button>
+                            </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                    </ItemsControl>
+                    <TextBlock x:Name="SessionsEmpty" Classes="muted" TextWrapping="Wrap" IsVisible="False"
+                               Text="No sessions yet. Start a game in Steam: the background tracker writes down when you start and stop playing, and it shows up here."/>
+                </StackPanel>
+            </ScrollViewer>
+
             <!-- Settings -->
             <ScrollViewer x:Name="SettingsPage" IsVisible="False">
                 <StackPanel Margin="30,26,30,30" MaxWidth="900" HorizontalAlignment="Left">
@@ -532,6 +594,19 @@
                     <TextBlock Classes="muted" FontSize="13" Margin="0,0,0,16" TextWrapping="Wrap"
                                Text="Colours the menu, buttons, progress bars and the activity calendar."/>
                     <WrapPanel x:Name="AccentPicker"/>
+
+                    <TextBlock Text="Achievement pop-ups" Classes="section" Margin="0,20,0,4"/>
+                    <TextBlock Classes="muted" FontSize="13" Margin="0,0,0,14" TextWrapping="Wrap"
+                               Text="A card slides in at the bottom-right corner when you unlock an achievement, with its icon and how rare it is. It never takes focus away from your game. (Games in exclusive fullscreen mode draw over it; borderless / windowed fullscreen shows it.)"/>
+                    <Border Classes="card" Padding="16,12" Margin="0,0,0,10">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <ToggleSwitch x:Name="PopupsSwitch" OnContent="" OffContent="" Padding="0" MinWidth="0"
+                                          Content="Show a pop-up when I unlock an achievement"/>
+                            <Button Grid.Column="1" Classes="pill" Click="TestPopup_Click" VerticalAlignment="Center">
+                                <TextBlock Text="Show a test pop-up"/>
+                            </Button>
+                        </Grid>
+                    </Border>
 
                     <TextBlock Text="Game soundtracks" Classes="section" Margin="0,20,0,4"/>
                     <TextBlock Classes="muted" FontSize="13" Margin="0,0,0,14" TextWrapping="Wrap"

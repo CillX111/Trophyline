@@ -292,6 +292,10 @@ static class Rarity
 
     static string FileFor(string appId) => Path.Combine(Folder, appId + ".json");
 
+    /// One achievement's global percentage from the cache (null if not downloaded yet).
+    public static double? Lookup(string appId, string apiName) =>
+        Read(appId) is { } map && map.TryGetValue(apiName, out var p) ? p : null;
+
     static Dictionary<string, double>? Read(string appId)
     {
         try

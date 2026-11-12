@@ -35,6 +35,8 @@ public partial class MainWindow : Window
     Control? pageBeforeGame;
 
     readonly DispatcherTimer musicTimer = new() { Interval = TimeSpan.FromSeconds(2) };
+    readonly DispatcherTimer nowTimer = new() { Interval = TimeSpan.FromSeconds(30) };
+    List<Session> sessions = [];
     List<PlaylistVM> playlists = [];
     bool musicBusy;
     string? lastTitle, lastArtist;
@@ -61,10 +63,20 @@ public partial class MainWindow : Window
         NavGames.IsCheckedChanged += (_, _) => { if (NavGames.IsChecked == true && !syncingNav) ShowPage(GamesPage); };
         NavStorage.IsCheckedChanged += (_, _) => { if (NavStorage.IsChecked == true && !syncingNav) ShowPage(StoragePage); };
         NavMusic.IsCheckedChanged += (_, _) => { if (NavMusic.IsChecked == true && !syncingNav) ShowPage(MusicPage); };
+        NavPlaytime.IsCheckedChanged += (_, _) => { if (NavPlaytime.IsChecked == true && !syncingNav) { BuildPlaytime(); ShowPage(PlaytimePage); } };
+        nowTimer.Tick += (_, _) => { if (PlaytimePage.IsVisible) UpdateNowPlaying(); };
+        PopupsSwitch.IsCheckedChanged += (_, _) =>
+        {
+            if (fillingSettings) return;
+            var cfg = Program.Settings();
+            cfg.UnlockPopups = PopupsSwitch.IsChecked == true;
+            Program.SaveSettings(cfg);
+        };
         NavSettings.IsCheckedChanged += (_, _) => { if (NavSettings.IsChecked == true && !syncingNav) { BuildSettings(); ShowPage(SettingsPage); } };
         GameSoundtrack.SelectionChanged += (_, _) => SoundtrackChanged();
         PauseOnQuitSwitch.IsCheckedChanged += (_, _) =>
         {
+            if (fillingSettings) return;
             var cfg = Program.Settings();
             cfg.PauseSoundtrackOnQuit = PauseOnQuitSwitch.IsChecked == true;
             Program.SaveSettings(cfg);
@@ -107,6 +119,7 @@ public partial class MainWindow : Window
         {
             WatchJournal();
             musicTimer.Start();
+            nowTimer.Start();
             _ = RefreshMusic();
             await LoadAsync(online: true);
             ready.TrySetResult();
@@ -179,6 +192,7 @@ public partial class MainWindow : Window
         BuildAchievements();
         BuildGames();
         BuildStorage();
+        BuildPlaytime();
         if (currentGame != null && games.FirstOrDefault(g => g.G.AppId == currentGame.G.AppId) is GameVM again)
             FillGamePage(again, animate: false);
     }
@@ -188,13 +202,19 @@ public partial class MainWindow : Window
         // The tracker writes the journal the moment you unlock something: reload then.
         try
         {
-            watcher = new FileSystemWatcher(Program.Home, "journal.tsv")
+            // ...and when it records a game starting or stopping.
+            watcher = new FileSystemWatcher(Program.Home)
             {
                 NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size | NotifyFilters.FileName,
             };
-            FileSystemEventHandler h = (_, _) => Dispatcher.UIThread.Post(() => { reloadTimer.Stop(); reloadTimer.Start(); });
+            FileSystemEventHandler h = (_, e) =>
+            {
+                if (e.Name is not ("journal.tsv" or "sessions.tsv" or "open-session.txt")) return;
+                Dispatcher.UIThread.Post(() => { reloadTimer.Stop(); reloadTimer.Start(); });
+            };
             watcher.Changed += h;
             watcher.Created += h;
+            watcher.Deleted += h;
             watcher.EnableRaisingEvents = true;
         }
         catch (Exception ex) { Program.LogError("watch: " + ex.Message); }
@@ -458,6 +478,12 @@ public partial class MainWindow : Window
             if (rare != null) GameStats.Children.Add(MiniStat("Rarest unlock", $"{rare.Rarity:0.0}%", Fmt.Gold));
         }
         if (g.Installed) GameStats.Children.Add(MiniStat("On disk", Fmt.Size(g.SizeOnDisk)));
+        var mine = sessions.Where(s => s.AppId == g.AppId).ToList();
+        if (mine.Count > 0)
+        {
+            GameStats.Children.Add(MiniStat("Sessions", mine.Count.ToString()));
+            GameStats.Children.Add(MiniStat("Longest session", Fmt.Hours(Math.Max(1, mine.Max(s => s.Minutes)))));
+        }
 
         bool hasAch = g.Total > 0;
         GameBar.IsVisible = GameChips.IsVisible = GameAchList.IsVisible = hasAch;
@@ -726,6 +752,7 @@ public partial class MainWindow : Window
         {
             var cfg = Program.Settings();
             PauseOnQuitSwitch.IsChecked = cfg.PauseSoundtrackOnQuit;
+            PopupsSwitch.IsChecked = cfg.UnlockPopups;
             int n = SoundtrackStore.Load().Count;
             SoundtrackCount.Text = (n == 0 ? "No game has a soundtrack yet." : $"{n} game{(n == 1 ? " has" : "s have")} a soundtrack.")
                 + (Program.TrackerRunning() ? "" : "  The background tracker isn't running, so soundtracks won't start.");
@@ -756,9 +783,126 @@ public partial class MainWindow : Window
         if (data != null) Apply(data); // rebuild tiles, bars and the calendar in the new colour
     }
 
+    void TestPopup_Click(object? sender, RoutedEventArgs e)
+    {
+        // Your latest unlock (or your rarest one) as a sample.
+        var a = unlocked.FirstOrDefault(x => x.A.Rarity is < 10) ?? unlocked.FirstOrDefault();
+        var item = a == null
+            ? new PopupItem("0", "Trophyline", "Pop-ups are on", "This is how an unlock will look.", "", null)
+            : new PopupItem(a.A.AppId, a.Game, a.Name, a.A.Description, IconFor(a), a.A.Rarity);
+        Popup.Show([item]);
+    }
+
+    static string IconFor(AchVM a)
+    {
+        var u = new Unlock(null, "", a.A.AppId, a.Game, a.Name, "", a.A.Icon);
+        return a.A.Icon.Length > 0 && File.Exists(IconCache.LocalPath(u)) ? IconCache.LocalPath(u) : "";
+    }
+
+    // =============== playtime (sessions) ===============
+
+    void BuildPlaytime()
+    {
+        sessions = SessionLog.Load();
+        var byId = games.GroupBy(g => g.G.AppId).ToDictionary(g => g.Key, g => g.First());
+        var all = sessions.ToList();
+        if (SessionLog.Current() is (string app, long start))
+            all.Add(new Session(app, start, DateTimeOffset.UtcNow.ToUnixTimeSeconds()));
+
+        long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        int MinutesBetween(DateTime from, DateTime to)
+        {
+            long a = new DateTimeOffset(from).ToUnixTimeSeconds(), b = new DateTimeOffset(to).ToUnixTimeSeconds();
+            return (int)(all.Sum(s => Math.Max(0, Math.Min(s.End, b) - Math.Max(s.Start, a))) / 60);
+        }
+        var today = DateTime.Today;
+        var monday = today.AddDays(-(((int)today.DayOfWeek + 6) % 7));
+        int todayMin = MinutesBetween(today, today.AddDays(1));
+        int weekMin = MinutesBetween(monday, today.AddDays(1));
+        int monthMin = MinutesBetween(today.AddDays(-29), today.AddDays(1));
+        var longest = all.OrderByDescending(s => s.End - s.Start).FirstOrDefault();
+
+        PlaytimeSub.Text = sessions.Count == 0 && all.Count == 0
+            ? "Trophyline writes down every play session from now on: when you start a game and when you stop."
+            : $"Tracked since {Fmt.Local(all.Min(s => s.Start)):dd.MM.yyyy}  ·  {all.Count} sessions  ·  {Fmt.Hours(all.Sum(s => s.Minutes))} in total";
+
+        PlaytimeTiles.Children.Clear();
+        PlaytimeTiles.Children.Add(Tile("IconClock", todayMin > 0 ? Fmt.Hours(todayMin) : "0 h", "today", today.ToString("dddd"), Palette.Brush));
+        PlaytimeTiles.Children.Add(Tile("IconChart", weekMin > 0 ? Fmt.Hours(weekMin) : "0 h", "this week", $"since Monday {monday:dd.MM}", Fmt.Purple));
+        PlaytimeTiles.Children.Add(Tile("IconGame", monthMin > 0 ? Fmt.Hours(monthMin) : "0 h", "last 30 days",
+            monthMin > 0 ? $"about {Fmt.Hours(monthMin / 30)} a day" : "nothing yet", Fmt.Green));
+        PlaytimeTiles.Children.Add(longest != null
+            ? Tile("IconBolt", Fmt.Hours(Math.Max(1, longest.Minutes)), "longest session",
+                   $"{(byId.TryGetValue(longest.AppId, out var lg) ? lg.Name : "App " + longest.AppId)} · {Fmt.Local(longest.Start):dd.MM}", Fmt.Gold)
+            : Tile("IconBolt", "–", "longest session", "play something!", Fmt.Gold));
+
+        // bar chart: minutes per day, last 14 days
+        PlayChart.Children.Clear();
+        const int days = 14;
+        const double barW = 34, gap = 22, chartH = 150, top = 20;
+        var perDay = Enumerable.Range(0, days).Select(i => today.AddDays(i - days + 1))
+                               .Select(d => (Day: d, Min: MinutesBetween(d, d.AddDays(1)))).ToList();
+        int max = Math.Max(60, perDay.Max(p => p.Min));
+        var muted = Res("Muted");
+        for (int i = 0; i < days; i++)
+        {
+            var (day, min) = perDay[i];
+            double x = i * (barW + gap);
+            double h = min == 0 ? 3 : Math.Max(6, chartH * min / max);
+            var bar = new Border
+            {
+                Width = barW, Height = h, CornerRadius = new CornerRadius(6, 6, 3, 3),
+                Background = min == 0 ? Res("Line") : day == today ? Palette.Brush : Fmt.Tint(Palette.Brush, 0xB0),
+            };
+            ToolTip.SetTip(bar, $"{day:dddd dd.MM}:  {(min == 0 ? "no play" : Fmt.Hours(min))}");
+            Canvas.SetLeft(bar, x);
+            Canvas.SetTop(bar, top + chartH - h);
+            PlayChart.Children.Add(bar);
+            if (min > 0)
+            {
+                var v = new TextBlock { Text = min >= 60 ? $"{min / 60.0:0.#}h" : $"{min}m", FontSize = 11, Foreground = muted, Width = barW, TextAlignment = TextAlignment.Center };
+                Canvas.SetLeft(v, x);
+                Canvas.SetTop(v, top + chartH - h - 16);
+                PlayChart.Children.Add(v);
+            }
+            var label = new TextBlock
+            {
+                Text = day == today ? "Today" : day.ToString("ddd"), FontSize = 11, Width = barW + gap, TextAlignment = TextAlignment.Center,
+                Foreground = day == today ? Res("Text") : muted, FontWeight = day == today ? FontWeight.SemiBold : FontWeight.Normal,
+            };
+            Canvas.SetLeft(label, x - gap / 2);
+            Canvas.SetTop(label, top + chartH + 6);
+            PlayChart.Children.Add(label);
+        }
+        PlayChart.Width = days * (barW + gap);
+        ChartTotal.Text = $"{Fmt.Hours(perDay.Sum(p => p.Min))} in 14 days";
+        if (perDay.Sum(p => p.Min) == 0) ChartTotal.Text = "nothing yet";
+
+        SessionList.ItemsSource = sessions.OrderByDescending(s => s.Start).Take(30)
+            .Select(s => new SessionVM(s, byId.GetValueOrDefault(s.AppId))).ToList();
+        SessionsEmpty.IsVisible = sessions.Count == 0;
+        UpdateNowPlaying();
+    }
+
+    void UpdateNowPlaying()
+    {
+        if (SessionLog.Current() is not (string app, long start)) { NowPlayingCard.IsVisible = false; return; }
+        var g = games.FirstOrDefault(x => x.G.AppId == app);
+        NowPlayingCard.IsVisible = true;
+        NowPlayingName.Text = g?.Name ?? $"App {app}";
+        NowPlayingImage.Source = g?.HeaderImage;
+        int min = (int)((DateTimeOffset.UtcNow.ToUnixTimeSeconds() - start) / 60);
+        NowPlayingSub.Text = $"since {Fmt.Local(start):HH:mm}  ·  {(min < 1 ? "just started" : Fmt.Hours(min))} so far";
+    }
+
+    void OpenSessionGame_Click(object? sender, RoutedEventArgs e)
+    {
+        if ((sender as Control)?.DataContext is SessionVM { Game: GameVM g }) OpenGame(g);
+    }
+
     // =============== navigation ===============
 
-    Control[] AllPages => [OverviewPage, AchievementsPage, GamesPage, GamePage, StoragePage, MusicPage, SettingsPage];
+    Control[] AllPages => [OverviewPage, AchievementsPage, GamesPage, GamePage, PlaytimePage, StoragePage, MusicPage, SettingsPage];
 
     Control? VisiblePage() => AllPages.FirstOrDefault(p => p.IsVisible);
 
@@ -767,7 +911,7 @@ public partial class MainWindow : Window
         if (page != GamePage) currentGame = null;
         foreach (var p in AllPages) p.IsVisible = p == page;
         var nav = page == OverviewPage ? NavOverview : page == AchievementsPage ? NavAchievements
-                : page == StoragePage ? NavStorage : page == MusicPage ? NavMusic : page == SettingsPage ? NavSettings : NavGames;
+                : page == StoragePage ? NavStorage : page == PlaytimePage ? NavPlaytime : page == MusicPage ? NavMusic : page == SettingsPage ? NavSettings : NavGames;
         if (nav.IsChecked != true)
         {
             syncingNav = true;
@@ -824,6 +968,7 @@ public partial class MainWindow : Window
             case "achievements": NavAchievements.IsChecked = true; AchSearch.Text = arg ?? ""; FillAchList(); break;
             case "games": NavGames.IsChecked = true; if (arg != null) GameSort.SelectedIndex = int.Parse(arg); break;
             case "storage": NavStorage.IsChecked = true; break;
+            case "playtime": NavPlaytime.IsChecked = true; break;
             case "settings":
                 NavSettings.IsChecked = true;
                 if (arg != null) PickAccent(arg);

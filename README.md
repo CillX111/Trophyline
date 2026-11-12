@@ -38,6 +38,12 @@ The files aren't signed by Microsoft or Apple, so the first launch shows a warni
   hero art, playtime, completion, and every achievement, including the ones still
   to get (easiest first, by global rarity). A **Play** button starts the game in Steam
   (or **Install** if it isn't installed)
+- **Playtime**: every play session, recorded by the tracker: today, this week, last
+  30 days, longest session, a 14-day chart, recent sessions, and what you're playing
+  right now. Game pages show your session count and longest session too
+- **Achievement pop-ups**: a card slides in at the bottom-right corner the moment you
+  unlock something, with the icon and how rare it is (gold for under 10%). It never
+  takes focus from your game; click it to open Trophyline. Turn it off in Settings
 - **Storage**: installed games by size, flags games not played in 6+ months
 - **Music**: save your Spotify playlists, albums or artists (paste a share link) and play
   them with one click; a mini-player in the sidebar shows the current song with
@@ -78,9 +84,11 @@ Data folder: `%LOCALAPPDATA%\Trophyline` (Windows), `~/Library/Application Suppo
 - `journal.tsv`: every recorded unlock (tab-separated, easy to import elsewhere)
 - `journal.html`: the same journal as a web page
 - `icons/`, `rarity/`: cached pictures and rarity stats
+- `sessions.tsv`: every play session (app id, start, end as unix time);
+  `open-session.txt` is the game running right now
 - `music/`: saved playlists and `soundtracks.json` (which game plays which playlist)
 - `config.json`: `language` (e.g. `"german"`), `accent`, `hideSpotify`,
-  `pauseSoundtrackOnQuit`, and optional `steamFolder` / `statsFolder`
+  `pauseSoundtrackOnQuit`, `unlockPopups`, and optional `steamFolder` / `statsFolder`
   if Steam is somewhere unusual
 
 ## Build

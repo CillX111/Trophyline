@@ -25,15 +25,20 @@ sealed class Journal
     public int Count => keys.Count;
 
     /// Adds unlocks that aren't in the journal yet. Returns how many were new.
-    public int Add(IEnumerable<Unlock> unlocks, bool fillMissingTimeWithNow)
+    public int Add(IEnumerable<Unlock> unlocks, bool fillMissingTimeWithNow) => AddNew(unlocks, fillMissingTimeWithNow).Count;
+
+    /// Like Add, but returns the unlocks that were new (with their recorded time).
+    public List<Unlock> AddNew(IEnumerable<Unlock> unlocks, bool fillMissingTimeWithNow)
     {
         var sb = new StringBuilder();
+        var fresh = new List<Unlock>();
         int added = 0;
         long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         foreach (var u in unlocks)
         {
             if (!keys.Add(u.Key)) continue;
             long? t = u.Time ?? (fillMissingTimeWithNow ? now : null);
+            fresh.Add(u with { Time = t });
             sb.Append(t?.ToString() ?? "").Append('\t')
               .Append(Clean(u.Key)).Append('\t')
               .Append(Clean(u.AppId)).Append('\t')
@@ -44,7 +49,7 @@ sealed class Journal
             added++;
         }
         if (added > 0) File.AppendAllText(dataPath, sb.ToString(), Encoding.UTF8);
-        return added;
+        return fresh;
     }
 
     static string Clean(string s) => s.Replace('\t', ' ').Replace('\r', ' ').Replace('\n', ' ');

@@ -23,6 +23,14 @@ public partial class App : Application
                 e.Handled = true;
             };
             Palette.Apply(Program.Settings().Accent);
+            if (Args.Length > 1 && Args[0] == "--popup")
+            {
+                var items = Popup.Read(Args[1]);
+                if (items.Count == 0) { desktop.Shutdown(); base.OnFrameworkInitializationCompleted(); return; }
+                desktop.MainWindow = new PopupWindow(items);
+                base.OnFrameworkInitializationCompleted();
+                return;
+            }
             var window = new MainWindow();
             if (Args.Length > 0 && Args[0] == "--snapshot") PrepareSnapshot(desktop, window);
             desktop.MainWindow = window;

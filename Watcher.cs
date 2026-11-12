@@ -82,31 +82,37 @@ sealed class Watcher : IDisposable
     {
         string[] files;
         lock (gate) { files = pending.ToArray(); pending.Clear(); }
-        int added = 0;
+        var fresh = new List<Unlock>();
         try
         {
             lock (work)
             {
-                foreach (var f in files) added += Process(f, fillMissingTimeWithNow: true);
-                if (added > 0) journal.WriteHtml();
+                foreach (var f in files) fresh.AddRange(ProcessNew(f, fillMissingTimeWithNow: true));
+                if (fresh.Count > 0) journal.WriteHtml(); // also downloads the new icons
             }
+            // Pop-up only for things unlocked just now (not for old history Steam syncs later).
+            long recent = DateTimeOffset.UtcNow.ToUnixTimeSeconds() - 15 * 60;
+            var live = fresh.Where(u => u.Time >= recent).ToList();
+            if (live.Count > 0 && Program.Settings().UnlockPopups) Popup.Show(live);
         }
         catch (Exception ex) { Program.LogError(ex.ToString()); }
         Program.TrimMemory();
     }
 
-    int Process(string statsFile, bool fillMissingTimeWithNow)
+    int Process(string statsFile, bool fillMissingTimeWithNow) => ProcessNew(statsFile, fillMissingTimeWithNow).Count;
+
+    List<Unlock> ProcessNew(string statsFile, bool fillMissingTimeWithNow)
     {
         try
         {
             // null = names not downloaded yet; the schema file's arrival will queue it again.
             var unlocks = Steam.ReadUnlocks(statsFile, cfg.Language, steamFolder);
-            return unlocks == null ? 0 : journal.Add(unlocks, fillMissingTimeWithNow);
+            return unlocks == null ? [] : journal.AddNew(unlocks, fillMissingTimeWithNow);
         }
         catch (Exception ex)
         {
             Program.LogError($"{Path.GetFileName(statsFile)}: {ex.Message}");
-            return 0;
+            return [];
         }
     }
 

@@ -223,3 +223,22 @@ public sealed class GameVM(GameInfo g)
     public bool Stale => G.LastPlayed == 0 || (DateTime.Now - Fmt.Local(G.LastPlayed)).TotalDays > 180;
     public string StaleText => G.LastPlayed == 0 ? "NEVER PLAYED" : "NOT PLAYED IN 6+ MONTHS";
 }
+
+/// One row in "Recent sessions".
+public sealed class SessionVM(Session s, GameVM? game)
+{
+    public Session S { get; } = s;
+    public GameVM? Game { get; } = game;
+    public string Name => Game?.Name ?? $"App {S.AppId}";
+    public Bitmap? Header => Game?.HeaderImage;
+    public string Duration => Fmt.Hours(Math.Max(1, S.Minutes));
+    public string When
+    {
+        get
+        {
+            var a = Fmt.Local(S.Start); var b = Fmt.Local(S.End);
+            var day = a.Date == DateTime.Today ? "Today" : a.Date == DateTime.Today.AddDays(-1) ? "Yesterday" : a.ToString("ddd dd.MM.yyyy");
+            return $"{day}  ·  {a:HH:mm} – {b:HH:mm}";
+        }
+    }
+}

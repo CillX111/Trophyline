@@ -63,6 +63,7 @@ sealed class GameMonitor : IDisposable
     public void Start()
     {
         current = RunningAppId();
+        SessionLog.Resume(current);
         if (Platform.Windows)
         {
             thread = new Thread(WaitOnRegistry) { IsBackground = true, Name = "game monitor" };
@@ -104,6 +105,7 @@ sealed class GameMonitor : IDisposable
         if (now == current) return;
         var before = current;
         current = now;
+        SessionLog.Changed(before, now);
         try { OnChange(before, now).GetAwaiter().GetResult(); }
         catch (Exception ex) { Program.LogError("soundtrack: " + ex.Message); }
         Program.TrimMemory();

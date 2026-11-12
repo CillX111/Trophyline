@@ -40,6 +40,7 @@ static class Program
             {
                 "" or "--open" => OpenWindow(args),
                 "--snapshot" => OpenWindow(args), // dev check: render the window to a PNG without showing it
+                "--popup" => OpenWindow(args),    // started by the tracker: one achievement pop-up, then exit
                 "--selftest" => SelfTest(),       // dev check: summary of the Steam data the window would show
                 "--background" => Run(),
                 "--update" => UpdateOnce(),
@@ -61,7 +62,7 @@ static class Program
 
     static int OpenWindow(string[] args)
     {
-        if (args.Length == 0 || args[0] != "--snapshot") EnsureTrackerRunning();
+        if (args.Length == 0 || args[0] is not ("--snapshot" or "--popup")) EnsureTrackerRunning();
         App.Args = args;
         AppDomain.CurrentDomain.UnhandledException += (_, e) => LogError("unhandled: " + e.ExceptionObject);
         return BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
@@ -284,6 +285,8 @@ public sealed class Config
     public bool HideSpotify { get; set; } = true;
     /// Pause a game's soundtrack when you quit that game.
     public bool PauseSoundtrackOnQuit { get; set; } = true;
+    /// Show a pop-up in the corner of the screen when you unlock an achievement.
+    public bool UnlockPopups { get; set; } = true;
     /// Accent colour of the window, e.g. "#66C0F4".
     public string Accent { get; set; } = Palette.Default;
 }

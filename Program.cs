@@ -363,6 +363,10 @@ public sealed class Config
     public bool SteamSignedIn { get; set; }
     /// The Steam account your online profile belongs to (so another account's numbers never overwrite it).
     public string OnlineSteamAccount { get; set; } = "";
+    /// The Steam account linked to the Trophyline account for verified scores (empty = not linked).
+    public string VerifiedSteam { get; set; } = "";
+    /// When the server last checked your scores with Steam (Unix time).
+    public long LastVerify { get; set; }
     /// Accent colour of the window, e.g. "#66C0F4".
     public string Accent { get; set; } = Palette.Default;
 }

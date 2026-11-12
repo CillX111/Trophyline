@@ -915,6 +915,26 @@
                                     <TextBox x:Name="NewPassBox" Grid.Column="2" Classes="search" Watermark="New password" PasswordChar="&#8226;" MaxLength="200"/>
                                     <Button Grid.Column="4" Classes="pill" Click="ChangePassword_Click" VerticalAlignment="Center"><TextBlock Text="Change password"/></Button>
                                 </Grid>
+
+                                <!-- Steam-verified scores -->
+                                <Border Background="{DynamicResource AccentSoft}" CornerRadius="10" Padding="14,12" Margin="0,6,0,0">
+                                    <StackPanel Spacing="8">
+                                        <TextBlock x:Name="VerifyTitle" FontWeight="SemiBold" TextWrapping="Wrap" Text="Steam-verified scores"/>
+                                        <TextBlock x:Name="VerifyText" FontSize="13" TextWrapping="Wrap"
+                                                   Text="Only Steam-verified players are ranked on the leaderboards. Link your Steam account and the Trophyline server reads your achievements from Steam itself, so nobody can fake them."/>
+                                        <StackPanel Orientation="Horizontal" Spacing="10">
+                                            <Button x:Name="LinkSteamButton" Classes="primary" Click="LinkSteam_Click" MinHeight="0" Padding="0">
+                                                <TextBlock x:Name="LinkSteamText" Text="Link Steam account" Margin="0,9"/>
+                                            </Button>
+                                            <Button x:Name="VerifyButton" Classes="pill" Click="VerifyNow_Click" VerticalAlignment="Center" IsVisible="False">
+                                                <TextBlock Text="Check now"/>
+                                            </Button>
+                                        </StackPanel>
+                                        <TextBlock x:Name="VerifyMsg" FontSize="12" TextWrapping="Wrap" IsVisible="False"/>
+                                        <TextBlock Classes="muted" FontSize="12" TextWrapping="Wrap"
+                                                   Text="Steam only shares your achievements if your game details are public: in Steam, open your profile → Edit Profile → Privacy Settings → Game details: Public. Linking opens Steam's own login page; Trophyline never sees your Steam password."/>
+                                    </StackPanel>
+                                </Border>
                             </StackPanel>
                             <TextBlock x:Name="AccountMsg" FontSize="12" TextWrapping="Wrap" Foreground="#FFB86B" IsVisible="False"/>
 

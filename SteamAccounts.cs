@@ -81,13 +81,22 @@ static class SteamAccounts
     // Steam's own website asks for the login; Trophyline only receives "this is account 7656…" and
     // checks with Steam that the answer is genuine. It never sees a password.
 
-    public sealed record SignInResult(string? Id64, string? Error);
+    /// Params: Steam's signed answer, when it's meant for the Trophyline server to confirm (forServer).
+    public sealed record SignInResult(string? Id64, string? Error, Dictionary<string, string>? Params = null);
 
     const string Blocked = "Steam's website (steamcommunity.com) can't be reached from this network, so signing in isn't possible here. "
                          + "Some school and work networks block it. Pick your account from the list instead, or try again on another network.";
 
-    public static async Task<SignInResult> SignIn(CancellationToken cancel)
+    /// forServer: don't confirm the answer here, hand it to the Trophyline server instead (Steam confirms
+    /// each sign-in only once, and the server must be the one that does it).
+    public static async Task<SignInResult> SignIn(CancellationToken cancel, bool forServer = false)
     {
+        if (forServer && Environment.GetEnvironmentVariable("TROPHYLINE_FAKE_OPENID") == "1") // dev check with the fake Steam
+            return new SignInResult("76561198000000009", null, new Dictionary<string, string>
+            {
+                ["openid.mode"] = "id_res", ["openid.sig"] = "app-test", ["openid.return_to"] = "http://127.0.0.1:50000/steam",
+            });
+
         // no point opening a login page that can't load
         try
         {
@@ -135,6 +144,14 @@ static class SteamAccounts
 
                 var q = ctx.Request.QueryString;
                 SignInResult result;
+                if (forServer)
+                {
+                    result = Collect(q, returnTo);
+                    Reply(ctx, 200, result.Error == null
+                        ? "<h2>Signed in with Steam.</h2><p>Go back to Trophyline: it's confirming this with Steam now. You can close this tab.</p>"
+                        : $"<h2>That didn't work.</h2><p>{WebUtility.HtmlEncode(result.Error)}</p><p>Go back to Trophyline and try again.</p>");
+                    return result;
+                }
                 try { result = await Verify(q, returnTo); }
                 catch (Exception) { result = new SignInResult(null, "Couldn't reach Steam to confirm the sign-in."); }
                 Reply(ctx, 200, result.Id64 != null
@@ -161,6 +178,19 @@ static class SteamAccounts
             ctx.Response.Close();
         }
         catch (Exception) { }
+    }
+
+    /// Checks the answer looks right and keeps Steam's signed fields for the server to confirm.
+    static SignInResult Collect(System.Collections.Specialized.NameValueCollection q, string returnTo)
+    {
+        if (q["openid.mode"] != "id_res") return new SignInResult(null, "The sign-in was cancelled.");
+        if (q["openid.return_to"] != returnTo) return new SignInResult(null, "The answer wasn't meant for this sign-in.");
+        var m = Regex.Match(q["openid.claimed_id"] ?? "", @"^https://steamcommunity\.com/openid/id/(\d{17})$");
+        if (!m.Success) return new SignInResult(null, "Steam didn't say which account this is.");
+        var form = new Dictionary<string, string>();
+        foreach (var key in q.AllKeys)
+            if (key != null && key.StartsWith("openid.", StringComparison.Ordinal)) form[key] = q[key] ?? "";
+        return new SignInResult(m.Groups[1].Value, null, form);
     }
 
     /// Asks Steam whether the answer the browser brought back is genuine, and reads the account from it.

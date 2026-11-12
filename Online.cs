@@ -100,7 +100,7 @@ static class Online
         cfg.OnlineUser = r?["username"]?.GetValue<string>() ?? "";
         cfg.OnlineName = r?["name"]?.GetValue<string>() is { Length: > 0 } n ? n : cfg.OnlineUser;
         cfg.OnlineEnabled = true;
-        if (!sameProfile) { cfg.OnlineSteamAccount = ""; cfg.AvatarHash = ""; }
+        if (!sameProfile) { cfg.OnlineSteamAccount = ""; cfg.AvatarHash = ""; cfg.VerifiedSteam = ""; cfg.LastVerify = 0; }
         Program.SaveSettings(cfg);
         lastUpload = default;
         return null;
@@ -132,6 +132,8 @@ static class Online
         cfg.OnlineUser = "";
         cfg.OnlineSteamAccount = "";
         cfg.AvatarHash = "";
+        cfg.VerifiedSteam = "";
+        cfg.LastVerify = 0;
         Program.SaveSettings(cfg);
     }
 
@@ -172,6 +174,8 @@ static class Online
         cfg.OnlineUser = "";
         cfg.OnlineSteamAccount = "";
         cfg.AvatarHash = "";
+        cfg.VerifiedSteam = "";
+        cfg.LastVerify = 0;
         Program.SaveSettings(cfg);
         return null;
     }
@@ -232,6 +236,7 @@ static class Online
             },
         };
         var (_, err) = await Rpc("tl_upsert", new JsonObject { ["p"] = p });
+        if (err == null) await AutoVerify();
         return err == "too often" ? null : err;
     }
 
@@ -298,5 +303,132 @@ static class Online
         args["p_who"] = who;
         args["p_block"] = block;
         return (await Rpc("tl_chat_block", args)).Error;
+    }
+
+    // ---------- Steam-verified scores (supabase/functions/trophyline) ----------
+    // The server asks Steam itself which games and achievements your linked account has. Only those
+    // numbers count on the leaderboards, so nothing on this computer can change them.
+
+    static readonly HttpClient SlowHttp = new() { Timeout = TimeSpan.FromSeconds(150) };
+
+    static string FunctionUrl =>
+        Environment.GetEnvironmentVariable("TROPHYLINE_FUNCTION") is { Length: > 0 } env ? env : $"{Server}/functions/v1/trophyline";
+
+    static async Task<(JsonNode? Result, string? Error)> CallFunction(JsonObject body)
+    {
+        try
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Post, FunctionUrl)
+            {
+                Content = new StringContent(body.ToJsonString(), Encoding.UTF8, "application/json"),
+            };
+            req.Headers.Add("apikey", Key);
+            using var res = await SlowHttp.SendAsync(req);
+            var text = await res.Content.ReadAsStringAsync();
+            JsonNode? node = null;
+            try { node = JsonNode.Parse(text); } catch { }
+            if (node is JsonObject o && o["error"] is JsonNode e && e.GetValueKind() == System.Text.Json.JsonValueKind.String)
+                return (node, e.GetValue<string>());
+            if (res.StatusCode == System.Net.HttpStatusCode.NotFound)
+                return (null, "The Steam check isn't set up on the Trophyline server yet.");
+            if (res.StatusCode == System.Net.HttpStatusCode.Unauthorized)
+                return (null, "The server's Steam check is set up with \"Verify JWT\" on. The server owner needs to turn it off.");
+            if (!res.IsSuccessStatusCode) return (null, $"Server said {(int)res.StatusCode}");
+            return (node, null);
+        }
+        catch (Exception ex) { return (null, "Couldn't reach the server: " + ex.Message); }
+    }
+
+    public static bool SteamLinked => Program.Settings().VerifiedSteam.Length > 0;
+
+    /// Sign in with Steam, and the server links that account to your Trophyline account. Returns an error or null.
+    public static async Task<string?> LinkSteam(CancellationToken cancel)
+    {
+        if (!LoggedIn || NeedsLogin) return "Log in to your Trophyline account first.";
+        var s = await SteamAccounts.SignIn(cancel, forServer: true);
+        if (s.Error != null || s.Params == null) return s.Error ?? "The sign-in didn't work.";
+        var openid = new JsonObject();
+        foreach (var (k, v) in s.Params) openid[k] = v;
+        var cfg = Program.Settings();
+        var (r, err) = await CallFunction(new JsonObject
+        {
+            ["action"] = "link", ["id"] = cfg.OnlineId, ["secret"] = cfg.OnlineSecret, ["openid"] = openid,
+        });
+        if (err != null) return err;
+        cfg = Program.Settings();
+        cfg.VerifiedSteam = r?["steam_id"]?.GetValue<string>() ?? s.Id64 ?? "";
+        cfg.OnlineSteamAccount = cfg.VerifiedSteam; // your profile shows this account's games
+        cfg.LastVerify = 0;
+        Program.SaveSettings(cfg);
+        return null;
+    }
+
+    static readonly SemaphoreSlim verifying = new(1, 1);
+
+    /// Has the server check your scores with Steam now. A big library is checked in parts, one call each.
+    public static async Task<(JsonNode? Result, string? Error)> Verify(Action<string>? progress = null)
+    {
+        if (!LoggedIn || NeedsLogin) return (null, "Log in to your Trophyline account first.");
+        if (!await verifying.WaitAsync(0)) return (null, "A check is already running.");
+        try
+        {
+            JsonNode? last = null;
+            for (int part = 0; part < 40; part++)
+            {
+                var cfg = Program.Settings();
+                var (r, err) = await CallFunction(new JsonObject { ["action"] = "verify", ["id"] = cfg.OnlineId, ["secret"] = cfg.OnlineSecret });
+                if (err != null) return (r, err);
+                last = r;
+                if (r?["partial"]?.GetValue<bool>() != true) break;
+                progress?.Invoke($"Checking your games with Steam… {r["left"]} games to go");
+            }
+            var c = Program.Settings();
+            c.LastVerify = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+            Program.SaveSettings(c);
+            return (last, null);
+        }
+        finally { verifying.Release(); }
+    }
+
+    /// Re-checks with Steam every 6 hours, from the tracker or the window.
+    public static async Task AutoVerify()
+    {
+        var cfg = Program.Settings();
+        if (!Enabled || NeedsLogin || cfg.VerifiedSteam.Length == 0) return;
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        if (now - cfg.LastVerify < 6 * 3600) return;
+        cfg.LastVerify = now; // also when it fails, so a broken check isn't retried every few minutes
+        Program.SaveSettings(cfg);
+        var (_, err) = await Verify();
+        if (err != null) Program.LogError("verify: " + err);
+    }
+
+    /// Linked account, last check, ranked or paused, and the verified numbers.
+    public static async Task<JsonNode?> VerifyStatus()
+    {
+        if (!LoggedIn || NeedsLogin) return null;
+        var r = await Read("tl_verify_status", Me());
+        if (r?["linked"] is JsonNode linked)
+        {
+            var cfg = Program.Settings();
+            var sid = linked.GetValue<bool>() ? r["steam_id"]?.GetValue<string>() ?? "" : "";
+            if (cfg.VerifiedSteam != sid)
+            {
+                cfg.VerifiedSteam = sid; // e.g. linked on another computer
+                if (sid.Length > 0) cfg.OnlineSteamAccount = sid;
+                Program.SaveSettings(cfg);
+            }
+        }
+        return r;
+    }
+
+    /// Reports a player to the server owner. Returns an error text or null.
+    public static async Task<string?> Report(string who, string reason)
+    {
+        var args = Me();
+        args["p_target"] = who;
+        args["p_reason"] = reason;
+        var (r, err) = await Rpc("tl_report", args);
+        return err ?? r?["error"]?.GetValue<string>();
     }
 }

@@ -1038,6 +1038,9 @@ public partial class MainWindow : Window
         var p = (arg ?? "").Split(',');
         _ = Task.Delay(1500).ContinueWith(_ => Dispatcher.UIThread.Post(() => ((ScrollViewer)SettingsPage).Offset = new Vector(0, 700)));
         if (p[0] == "logout") { Logout_Click(null, new RoutedEventArgs()); return; }
+        if (p[0] == "link") { LinkSteam_Click(null, new RoutedEventArgs()); return; }
+        if (p[0] == "verify") { VerifyNow_Click(null, new RoutedEventArgs()); return; }
+        if (p[0] == "status") return;
         if (p.Length < 3) return;
         UserBox.Text = p[1];
         PassBox.Text = p[2];
@@ -1060,6 +1063,99 @@ public partial class MainWindow : Window
         LoggedInAs.Text = $"Logged in as {Online.Username}";
         if (legacy && string.IsNullOrEmpty(UserBox.Text))
             UserBox.Text = new string(Program.Settings().OnlineName.Where(c => char.IsAsciiLetterOrDigit(c) || c == '_').Take(20).ToArray());
+        if (loggedIn && !legacy) _ = ShowVerifyState();
+    }
+
+    // ----- Steam-verified scores -----
+
+    void VerifyNote(string? text, bool good = false)
+    {
+        VerifyMsg.IsVisible = !string.IsNullOrEmpty(text);
+        VerifyMsg.Text = text ?? "";
+        VerifyMsg.Foreground = good ? Fmt.Green : Fmt.Orange;
+    }
+
+    async Task ShowVerifyState(JsonNode? st = null)
+    {
+        if (!Online.LoggedIn || Online.NeedsLogin) return;
+        st ??= await Online.VerifyStatus();
+        if (st == null || st["error"] != null)
+        {
+            VerifyTitle.Text = "Steam-verified scores";
+            VerifyText.Text = "Couldn't reach the server to see your Steam check right now.";
+            return;
+        }
+        bool linked = st["linked"]?.GetValue<bool>() == true;
+        bool ranked = st["ranked"]?.GetValue<bool>() == true;
+        bool flagged = st["flagged"]?.GetValue<bool>() == true;
+        bool partial = st["partial"]?.GetValue<bool>() == true;
+        var state = S(st["state"]);
+        long at = L(st["verified_at"]);
+        LinkSteamText.Text = linked ? "Link a different Steam account" : "Link Steam account";
+        LinkSteamButton.Classes.Set("primary", !linked);
+        LinkSteamButton.Classes.Set("pill", linked);
+        LinkSteamText.Margin = linked ? new Thickness(0) : new Thickness(0, 9);
+        VerifyButton.IsVisible = linked;
+        VerifyTitle.Foreground = ranked ? Fmt.Green : flagged || state == "private" ? Fmt.Orange : Res("Text");
+        if (!linked)
+        {
+            VerifyTitle.Text = "Steam-verified scores: not linked yet";
+            VerifyText.Text = "Only Steam-verified players are ranked on the leaderboards. Link your Steam account and the Trophyline server reads your achievements from Steam itself, so nobody can fake them.";
+            return;
+        }
+        if (state == "private")
+        {
+            VerifyTitle.Text = "Steam doesn't share your achievements";
+            VerifyText.Text = "Your Steam game details are private, so the server can't read them and you're not ranked. Make them public (see below), then press Check now.";
+        }
+        else if (flagged)
+        {
+            VerifyTitle.Text = "Paused for a check";
+            VerifyText.Text = "The automatic cheat check found something unusual, for example a whole game unlocked in the same second. The server owner will take a look. Until then you're not ranked.";
+        }
+        else if (at == 0)
+        {
+            VerifyTitle.Text = "Linked, not checked yet";
+            VerifyText.Text = partial ? "Part of your library is checked. Press Check now to finish." : "Press Check now to read your achievements from Steam.";
+        }
+        else
+        {
+            VerifyTitle.Text = "✓ Steam-verified: you're ranked";
+            long perfect = L(st["perfect"]);
+            VerifyText.Text = $"Checked with Steam {Fmt.Ago(at)}: level {L(st["level"])}, {L(st["xp"]):N0} XP, {perfect} {(perfect == 1 ? "game" : "games")} at 100%, "
+                            + $"{L(st["season_xp"]):N0} season XP. It's checked again every 6 hours. Leaderboard XP comes only from Steam, so tracked sessions don't count there.";
+        }
+    }
+
+    CancellationTokenSource? linkCancel;
+
+    async void LinkSteam_Click(object? sender, RoutedEventArgs e)
+    {
+        linkCancel?.Cancel();
+        linkCancel = new CancellationTokenSource();
+        VerifyNote("Steam's login page opened in your browser. Sign in there, then come back here.", good: true);
+        var err = await Online.LinkSteam(linkCancel.Token);
+        if (err != null) { VerifyNote(err); return; }
+        VerifyNote("Linked. Reading your achievements from Steam…", good: true);
+        await RunVerify();
+    }
+
+    async void VerifyNow_Click(object? sender, RoutedEventArgs e)
+    {
+        VerifyNote("Asking Steam…", good: true);
+        await RunVerify();
+    }
+
+    async Task RunVerify()
+    {
+        VerifyButton.IsEnabled = LinkSteamButton.IsEnabled = false;
+        var (r, err) = await Online.Verify(msg => Dispatcher.UIThread.Post(() => VerifyNote(msg, good: true)));
+        VerifyButton.IsEnabled = LinkSteamButton.IsEnabled = true;
+        if (err != null) VerifyNote(err);
+        else if (S(r?["state"]) == "private") VerifyNote("Steam says your game details are private.");
+        else VerifyNote(r?["flagged"]?.GetValue<bool>() == true ? "Checked. Something looked unusual, so your scores are paused for a check." : "Checked with Steam.", good: r?["flagged"]?.GetValue<bool>() != true);
+        seasonIds.Clear();
+        await ShowVerifyState();
     }
 
     void AccountNote(string? text, bool good = false)
@@ -1192,7 +1288,8 @@ public partial class MainWindow : Window
             return;
         }
         var rows = res["rows"]?.AsArray() ?? [];
-        LbSub.Text = $"{L(res["players"]):N0} players on Trophyline  ·  click someone to see their profile";
+        LbSub.Text = $"{L(res["ranked"]):N0} Steam-verified players ranked ({L(res["players"]):N0} on Trophyline)  ·  click someone to see their profile"
+                   + (Online.Enabled && !Online.SteamLinked ? "  ·  link your Steam account in Settings to be ranked" : "");
         var me = Online.MyId;
         LbRows.Children.Clear();
         foreach (var r in rows)
@@ -1204,7 +1301,12 @@ public partial class MainWindow : Window
                                           Shop.Load().Equipped, L(mine["value"]), true, 1));
         }
         if (board == "season" && (seasonId == null || seasonId == season.Id))
-            MySeasonPlace.Text = res["me"] is JsonNode m2 ? $"#{L(m2["pos"])} this season" : Online.Enabled ? "earn XP to get on the board" : "not on the leaderboards";
+        {
+            if (res["me"] is JsonNode m3) MySeasonXp.Text = $"{L(m3["value"]):N0}"; // Steam's number, the one that's ranked
+            MySeasonPlace.Text = res["me"] is JsonNode m2 ? $"#{L(m2["pos"])} this season"
+                : !Online.Enabled ? "not on the leaderboards"
+                : Online.SteamLinked ? "not ranked yet (see Settings)" : "link Steam in Settings to be ranked";
+        }
         LbEmpty.IsVisible = rows.Count == 0;
         LbEmpty.Text = "Nobody here yet. Be the first!";
     }
@@ -1373,12 +1475,52 @@ public partial class MainWindow : Window
         var (rank, rankHex) = Xp.RankFor(level);
         var prof = p["profile"];
 
+        // the Report form (opens under the header)
+        var reportBox = new TextBox { Watermark = "What looks wrong? For example: 100% in a game within one second", MaxLength = 300, Width = 460 };
+        reportBox.Classes.Add("search");
+        var reportMsg = new TextBlock { FontSize = 12, TextWrapping = TextWrapping.Wrap };
+        var sendReport = new Button { Content = new TextBlock { Text = "Send report" }, VerticalAlignment = VerticalAlignment.Center };
+        sendReport.Classes.Add("pill");
+        sendReport.Click += async (_, _) =>
+        {
+            var err = await Online.Report(id, reportBox.Text ?? "");
+            reportMsg.Text = err ?? "Sent to the server owner. Thanks!";
+            reportMsg.Foreground = err == null ? Fmt.Green : Fmt.Orange;
+            if (err == null) reportBox.Text = "";
+        };
+        var reportRow = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 };
+        reportRow.Children.Add(reportBox);
+        reportRow.Children.Add(sendReport);
+        var reportInner = new StackPanel { Spacing = 8 };
+        reportInner.Children.Add(new TextBlock { Text = $"Report {name} to the server owner", FontWeight = FontWeight.SemiBold });
+        reportInner.Children.Add(reportRow);
+        reportInner.Children.Add(reportMsg);
+        var reportPanel = new Border { Child = reportInner, Padding = new Thickness(16, 12), Margin = new Thickness(0, 14, 0, 0), IsVisible = false };
+        reportPanel.Classes.Add("card");
+
         // header
         var head = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 22 };
         head.Children.Add(Avatar(S(prof?["icon"]), name, 96, Fmt.Brush(rankHex), id, L(p["avatar"])));
         var ht = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
         ht.Children.Add(new TextBlock { Text = name + (id == Online.MyId ? "  (you)" : ""), FontSize = 32, FontWeight = FontWeight.Bold });
-        ht.Children.Add(new TextBlock { Text = $"Level {level}  ·  {rank}", FontSize = 16, FontWeight = FontWeight.SemiBold, Foreground = Fmt.Brush(rankHex) });
+        bool verified = p["verified"]?.GetValue<bool>() == true;
+        var levelLine = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12 };
+        levelLine.Children.Add(new TextBlock { Text = $"Level {level}  ·  {rank}", FontSize = 16, FontWeight = FontWeight.SemiBold, Foreground = Fmt.Brush(rankHex) });
+        var badge = new Border
+        {
+            CornerRadius = new CornerRadius(8), Padding = new Thickness(8, 2), VerticalAlignment = VerticalAlignment.Center,
+            Background = verified ? Fmt.Tint(Fmt.Green, 0x30) : Res("Line"),
+            Child = new TextBlock
+            {
+                Text = verified ? "✓ Steam-verified" : "not verified · not ranked", FontSize = 12, FontWeight = FontWeight.SemiBold,
+                Foreground = verified ? Fmt.Green : Res("Muted"),
+            },
+        };
+        ToolTip.SetTip(badge, verified
+            ? "These numbers come from Steam itself, read by the Trophyline server."
+            : "These numbers come from this player's computer and weren't checked with Steam, so they aren't ranked.");
+        levelLine.Children.Add(badge);
+        ht.Children.Add(levelLine);
         ht.Children.Add(new TextBlock
         {
             Text = $"On Trophyline since {Fmt.Local(L(p["created"])):dd.MM.yyyy}  ·  updated {Fmt.Ago(L(p["updated"]))}",
@@ -1391,6 +1533,13 @@ public partial class MainWindow : Window
             msg.Classes.Add("pill");
             msg.Click += async (_, _) => await OpenChat(id, name);
             actions.Children.Add(msg);
+            if (Online.Enabled && !Online.NeedsLogin)
+            {
+                var report = new Button { Content = new TextBlock { Text = "Report" }, Margin = new Thickness(0, 0, 8, 8) };
+                report.Classes.Add("pill");
+                report.Click += (_, _) => reportPanel.IsVisible = !reportPanel.IsVisible;
+                actions.Children.Add(report);
+            }
         }
         // their links (usernames only; the web address is built here, never taken from the server)
         var links = prof?["links"] as JsonObject;
@@ -1410,14 +1559,16 @@ public partial class MainWindow : Window
         if (actions.Children.Count > 0) ht.Children.Add(actions);
         head.Children.Add(ht);
         PlayerBody.Children.Add(head);
+        PlayerBody.Children.Add(reportPanel);
 
         var places = p["places"];
         var season = p["season"];
+        string Place(string key, string board) => places is JsonObject ? $"#{L(places[key])} {board}" : "not ranked";
         var tiles = new Avalonia.Controls.Primitives.UniformGrid { Columns = 3, Margin = new Thickness(-8, 18, -8, 0) };
-        tiles.Children.Add(Tile("IconShield", $"{L(p["xp"]):N0}", "total XP", $"#{L(places?["xp"])} on the XP board", Palette.Brush));
+        tiles.Children.Add(Tile("IconShield", $"{L(p["xp"]):N0}", "total XP", Place("xp", "on the XP board"), Palette.Brush));
         tiles.Children.Add(Tile("IconPodium", $"{L(season?["xp"]):N0}", "season XP", $"{S(season?["name"])} · {S(season?["label"])}", Fmt.Purple));
-        tiles.Children.Add(Tile("IconStar", $"{L(p["perfect"])}", "completed games", $"#{L(places?["perfect"])} on the completion board", Fmt.Gold));
-        tiles.Children.Add(Tile("IconChart", $"{L(p["over75"])}", "games over 75%", $"#{L(places?["over75"])} on that board", Fmt.Green));
+        tiles.Children.Add(Tile("IconStar", $"{L(p["perfect"])}", "completed games", Place("perfect", "on the completion board"), Fmt.Gold));
+        tiles.Children.Add(Tile("IconChart", $"{L(p["over75"])}", "games over 75%", Place("over75", "on that board"), Fmt.Green));
         tiles.Children.Add(Tile("IconStar", $"{L(p["unlocked"]):N0}", "achievements", $"in {L(p["games"])} games", Palette.Brush));
         tiles.Children.Add(Tile("IconClock", $"{L(p["hours"]):N0} h", "played", "on Steam", Fmt.Orange));
         PlayerBody.Children.Add(tiles);

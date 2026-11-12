@@ -50,7 +50,7 @@ The files aren't signed by Microsoft or Apple, so the first launch shows a warni
   the Level page shows ranks (Rookie → Explorer → Hunter → Veteran → Elite → Master →
   Legend), where your XP comes from and recent gains. Pop-ups show the XP you earned
   and a "Level up!" card when you reach a new level
-- **Leaderboards** (online, with a free Trophyline account): Season XP, Highest XP, Most completed games and
+- **Leaderboards** (online, with a free Trophyline account, Steam-verified): Season XP, Highest XP, Most completed games and
   Most games over 75%, plus every season's champions. Click anyone to see their
   profile: level, rank, places, best games and latest unlocks
 - **Seasons**: each lasts 3 months (Season 1 = Autumn 2026, October–December);
@@ -87,10 +87,20 @@ The files aren't signed by Microsoft or Apple, so the first launch shows a warni
   Delete account removes all of it from the server. The server is a Supabase project set
   up by [`supabase/trophyline.sql`](supabase/trophyline.sql): the tables can't be read
   directly, only through its `tl_*` functions, and every change needs your login.
-- **Scores are on trust**: they're worked out from the Steam files on each player's
-  computer, so an account doesn't stop someone editing those files. The server owner can
-  ban a player (Supabase → Table Editor → `players` → tick `banned`): they disappear from
-  leaderboards, profiles and chat and can't log in or upload.
+- **Only Steam-verified players are ranked** (Settings → Trophyline account → Link Steam
+  account). Linking uses Steam's own login page; the Trophyline server confirms it with
+  Steam, then reads that account's games and achievements from Steam's Web API itself and
+  re-checks every 6 hours. Leaderboard numbers come only from there, so editing files on
+  your computer changes nothing. Your Steam profile's **Game details** must be public.
+  Leaderboard XP doesn't include tracked sessions (Steam doesn't know about them).
+- **Cheat checks**: the server pauses a player (not ranked, until the owner looks) when
+  almost a whole game was unlocked in one second, when achievements appear in 3+ games
+  within one minute, or when a game with no playtime has achievements. These are typical of
+  achievement-unlocker tools, which Steam itself can't tell apart from real unlocks.
+- **Moderation**: players can **Report** a profile. In Supabase → Table Editor:
+  `reports` lists the reports; in `players`, tick `approve` to clear a paused player, or
+  `banned` to remove someone from leaderboards, profiles and chat.
+- Unverified profiles still show their (unchecked) numbers, marked "not verified".
 - Reads the files Steam already keeps on your computer: achievements
   (`appcache/stats`), playtime (`userdata/…/localconfig.vdf`), installed games and the
   artwork Steam downloaded. No Steam API key or public profile needed.
@@ -159,6 +169,19 @@ dotnet publish -c Release -r win-x64 -o dist -p:SelfContained=true -p:IncludeNat
 ```
 
 Releases for all systems are built by GitHub Actions when a `v*` tag is pushed.
+
+## Server setup (Supabase)
+
+1. **SQL Editor** → New query → paste [`supabase/trophyline.sql`](supabase/trophyline.sql) → Run
+   (safe to run again after updates; it keeps all data).
+2. **Edge Functions** → Deploy a new function → Via Editor → name it `trophyline` → paste
+   [`supabase/functions/trophyline/index.ts`](supabase/functions/trophyline/index.ts) → Deploy.
+   In the function's settings turn **Verify JWT** off (the app sends the publishable key,
+   which isn't a JWT; the function checks the player's login itself).
+3. **Edge Functions → Secrets** → add `STEAM_API_KEY` with a key from
+   <https://steamcommunity.com/dev/apikey>. It stays on the server; the app never sees it.
+
+Tests without Supabase or Steam: `cd supabase/test && npm install && node verify-test.mjs`.
 
 ## License
 

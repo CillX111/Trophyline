@@ -11,7 +11,8 @@ await db.exec(`
   create schema if not exists extensions;
   do $$ begin create role anon nologin; exception when duplicate_object then null; end $$;
   do $$ begin create role authenticated nologin; exception when duplicate_object then null; end $$;
-  grant usage on schema public to anon, authenticated;
+  do $$ begin create role service_role nologin; exception when duplicate_object then null; end $$;
+  grant usage on schema public to anon, authenticated, service_role;
 `);
 await db.exec(readFileSync(new URL("../trophyline.sql", import.meta.url), "utf8"));
 console.log("trophyline.sql loaded");
@@ -22,13 +23,16 @@ for (const f of (process.env.EXTRA_SQL || "").split(";").filter(Boolean)) {
 }
 
 // named arguments, like PostgREST:  select fn(a => $1, b => $2)
-async function rpc(fn, args) {
+// SERVICE_KEY (default "test-service-key") stands in for Supabase's secret key: calls with it run as service_role
+const serviceKey = process.env.SERVICE_KEY || "test-service-key";
+
+async function rpc(fn, args, role) {
   if (!/^[a-z_][a-z0-9_]*$/.test(fn)) throw new Error("bad function");
   const names = Object.keys(args);
   const sql = `select ${fn}(${names.map((n, i) => `${n} => $${i + 1}`).join(", ")}) as r`;
   const values = names.map((n) => (args[n] !== null && typeof args[n] === "object" ? JSON.stringify(args[n]) : args[n]));
   return db.transaction(async (tx) => {
-    await tx.exec("set local role anon");
+    await tx.exec(`set local role ${role}`);
     const res = await tx.query(sql, values);
     return res.rows[0].r;
   });
@@ -45,7 +49,7 @@ createServer(async (req, res) => {
   let body = "";
   for await (const chunk of req) body += chunk;
   try {
-    send(200, await rpc(m[1], body ? JSON.parse(body) : {}));
+    send(200, await rpc(m[1], body ? JSON.parse(body) : {}, req.headers["apikey"] === serviceKey ? "service_role" : "anon"));
   } catch (e) {
     send(400, { code: e.code || "P0001", message: e.message });
   }

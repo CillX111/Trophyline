@@ -34,6 +34,11 @@ public partial class MainWindow : Window
     GameVM? currentGame;
     Control? pageBeforeGame;
 
+    readonly DispatcherTimer musicTimer = new() { Interval = TimeSpan.FromSeconds(2) };
+    List<PlaylistVM> playlists = [];
+    bool musicBusy;
+    string? lastTitle, lastArtist;
+
     /// Completes once the first load (including online extras) is done. Used by --snapshot.
     public Task Ready => ready.Task;
 
@@ -55,6 +60,12 @@ public partial class MainWindow : Window
         NavAchievements.IsCheckedChanged += (_, _) => { if (NavAchievements.IsChecked == true && !syncingNav) ShowPage(AchievementsPage); };
         NavGames.IsCheckedChanged += (_, _) => { if (NavGames.IsChecked == true && !syncingNav) ShowPage(GamesPage); };
         NavStorage.IsCheckedChanged += (_, _) => { if (NavStorage.IsChecked == true && !syncingNav) ShowPage(StoragePage); };
+        NavMusic.IsCheckedChanged += (_, _) => { if (NavMusic.IsChecked == true && !syncingNav) ShowPage(MusicPage); };
+
+        // Spotify: ask what's playing every 2 seconds while the window is open.
+        musicTimer.Tick += async (_, _) => await RefreshMusic();
+        PlaylistLink.KeyDown += async (_, e) => { if (e.Key == Key.Enter) { e.Handled = true; await AddPlaylistFromBox(); } };
+        FillPlaylists();
 
         AchRarity.ItemsSource = RarityOptions;
         AchRarity.SelectedIndex = 0;
@@ -74,7 +85,14 @@ public partial class MainWindow : Window
 
         reloadTimer.Tick += async (_, _) => { reloadTimer.Stop(); await LoadAsync(online: false); };
         AddHandler(KeyDownEvent, OnKey, RoutingStrategies.Tunnel);
-        Opened += async (_, _) => { WatchJournal(); await LoadAsync(online: true); ready.TrySetResult(); };
+        Opened += async (_, _) =>
+        {
+            WatchJournal();
+            musicTimer.Start();
+            _ = RefreshMusic();
+            await LoadAsync(online: true);
+            ready.TrySetResult();
+        };
         Activated += async (_, _) =>
         {
             if (!loading && lastLoad != default && DateTime.Now - lastLoad > TimeSpan.FromMinutes(2))
@@ -495,9 +513,120 @@ public partial class MainWindow : Window
         StorageList.ItemsSource = installed;
     }
 
+    // =============== music (Spotify) ===============
+
+    async Task RefreshMusic()
+    {
+        if (musicBusy) return;
+        musicBusy = true;
+        try { ApplyMusic(await Task.Run(Spotify.Status)); }
+        catch (Exception ex) { Program.LogError("music: " + ex.Message); }
+        finally { musicBusy = false; }
+    }
+
+    void ApplyMusic(NowPlaying s)
+    {
+        MiniButtons.IsVisible = BigButtons.IsVisible = s.Running;
+        MiniOpen.IsVisible = BigOpen.IsVisible = !s.Running;
+        var icon = Icon(s.Playing ? "IconPause" : "IconPlay");
+        MiniPlayIcon.Data = icon;
+        BigPlayIcon.Data = icon;
+
+        if (!s.Running)
+        {
+            MiniTitle.Text = "Spotify";
+            MiniArtist.Text = "not open";
+            BigState.Text = "SPOTIFY ISN'T OPEN";
+            BigTitle.Text = "Open Spotify to play music";
+            BigArtist.Text = "or click one of your playlists below";
+            return;
+        }
+        if (s.Playing && s.Title.Length > 0) { lastTitle = s.Title; lastArtist = s.Artist; }
+        MiniTitle.Text = lastTitle ?? (s.Playing ? "Playing" : "Paused");
+        MiniArtist.Text = s.Playing ? lastArtist ?? "" : "paused";
+        BigState.Text = s.Playing ? "NOW PLAYING" : "PAUSED";
+        BigTitle.Text = lastTitle ?? "Spotify is ready";
+        BigArtist.Text = lastArtist ?? "press play or pick a playlist";
+    }
+
+    async void SendMusic(Spotify.Command c)
+    {
+        await Task.Run(() => Spotify.Send(c));
+        await Task.Delay(700);
+        await RefreshMusic();
+    }
+
+    void PlayPause_Click(object? sender, RoutedEventArgs e) => SendMusic(Spotify.Command.PlayPause);
+    void Next_Click(object? sender, RoutedEventArgs e) => SendMusic(Spotify.Command.Next);
+    void Prev_Click(object? sender, RoutedEventArgs e) => SendMusic(Spotify.Command.Previous);
+
+    async void OpenSpotify_Click(object? sender, RoutedEventArgs e)
+    {
+        Spotify.OpenApp();
+        await Task.Delay(3000);
+        await RefreshMusic();
+    }
+
+    void FillPlaylists()
+    {
+        playlists = PlaylistStore.Load().OrderByDescending(p => p.Added).Select(p => new PlaylistVM(p)).ToList();
+        PlaylistGrid.ItemsSource = playlists;
+        MusicEmpty.IsVisible = playlists.Count == 0;
+    }
+
+    async void AddPlaylist_Click(object? sender, RoutedEventArgs e) => await AddPlaylistFromBox();
+
+    async Task AddPlaylistFromBox()
+    {
+        var text = PlaylistLink.Text ?? "";
+        if (text.Trim().Length == 0) return;
+        await AddPlaylist(text);
+    }
+
+    async Task AddPlaylist(string text)
+    {
+        AddHint.Text = "Looking it up on Spotify…";
+        var p = await PlaylistStore.FromLink(text);
+        if (p == null)
+        {
+            AddHint.Text = "That doesn't look like a Spotify link. In Spotify: right-click a playlist → Share → Copy link to playlist.";
+            return;
+        }
+        var list = PlaylistStore.Load();
+        list.RemoveAll(x => x.Kind == p.Kind && x.Id == p.Id);
+        list.Add(p);
+        PlaylistStore.Save(list);
+        PlaylistLink.Text = "";
+        AddHint.Text = $"Added \"{p.Title}\". Click it to play.";
+        FillPlaylists();
+    }
+
+    async void PlayPlaylist_Click(object? sender, RoutedEventArgs e)
+    {
+        if ((sender as Control)?.DataContext is not PlaylistVM vm) return;
+        AddHint.Text = $"Starting \"{vm.Title}\" in Spotify…";
+        await Spotify.PlayAsync(vm.P);
+        await RefreshMusic();
+        AddHint.Text = Platform.Windows
+            ? $"Playing \"{vm.Title}\". If Spotify kept playing something else, press play once in Spotify."
+            : $"Playing \"{vm.Title}\".";
+    }
+
+    void RemovePlaylist_Click(object? sender, RoutedEventArgs e)
+    {
+        e.Handled = true; // don't also start it
+        if ((sender as Control)?.DataContext is not PlaylistVM vm) return;
+        var list = PlaylistStore.Load();
+        list.RemoveAll(x => x.Kind == vm.P.Kind && x.Id == vm.P.Id);
+        PlaylistStore.Save(list);
+        try { File.Delete(PlaylistStore.CoverPath(vm.P)); } catch (IOException) { }
+        AddHint.Text = $"Removed \"{vm.Title}\".";
+        FillPlaylists();
+    }
+
     // =============== navigation ===============
 
-    Control[] AllPages => [OverviewPage, AchievementsPage, GamesPage, GamePage, StoragePage];
+    Control[] AllPages => [OverviewPage, AchievementsPage, GamesPage, GamePage, StoragePage, MusicPage];
 
     Control? VisiblePage() => AllPages.FirstOrDefault(p => p.IsVisible);
 
@@ -506,7 +635,7 @@ public partial class MainWindow : Window
         if (page != GamePage) currentGame = null;
         foreach (var p in AllPages) p.IsVisible = p == page;
         var nav = page == OverviewPage ? NavOverview : page == AchievementsPage ? NavAchievements
-                : page == StoragePage ? NavStorage : NavGames;
+                : page == StoragePage ? NavStorage : page == MusicPage ? NavMusic : NavGames;
         if (nav.IsChecked != true)
         {
             syncingNav = true;
@@ -563,6 +692,10 @@ public partial class MainWindow : Window
             case "achievements": NavAchievements.IsChecked = true; AchSearch.Text = arg ?? ""; FillAchList(); break;
             case "games": NavGames.IsChecked = true; if (arg != null) GameSort.SelectedIndex = int.Parse(arg); break;
             case "storage": NavStorage.IsChecked = true; break;
+            case "music":
+                NavMusic.IsChecked = true;
+                if (arg != null) _ = AddPlaylist(arg);
+                break;
             case "game":
                 var vm = games.FirstOrDefault(g => g.G.AppId == arg) ?? games.OrderByDescending(g => g.G.LastPlayed).First();
                 OpenGame(vm);
@@ -574,5 +707,6 @@ public partial class MainWindow : Window
     internal string DescribeView() =>
         $"page={VisiblePage()?.Name} games={games.Count} unlocked={unlocked.Count} " +
         $"achRows={(AchList.ItemsSource as System.Collections.IList)?.Count} gameRows={(GameAchList.ItemsSource as System.Collections.IList)?.Count} " +
-        $"storage={(StorageList.ItemsSource as System.Collections.IList)?.Count} os={Environment.OSVersion.Platform}";
+        $"storage={(StorageList.ItemsSource as System.Collections.IList)?.Count} os={Environment.OSVersion.Platform} " +
+        $"playlists={playlists.Count} music='{MiniTitle.Text} / {MiniArtist.Text}'";
 }

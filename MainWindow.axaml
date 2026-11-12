@@ -65,6 +65,34 @@
                 </StackPanel>
             </Button>
         </DataTemplate>
+
+        <!-- Spotify playlist card -->
+        <DataTemplate x:Key="PlaylistCard" DataType="local:PlaylistVM">
+            <Button Classes="plain" Click="PlayPlaylist_Click" Margin="0,0,18,20" Width="180" ToolTip.Tip="Play in Spotify">
+                <StackPanel>
+                    <Panel Classes="art" Width="180" Height="180">
+                        <Border Classes="artFrame" CornerRadius="12" Background="{StaticResource CardHi}" ClipToBounds="True">
+                            <Panel>
+                                <PathIcon Data="{StaticResource IconMusic}" Width="48" Height="48" Foreground="{StaticResource Muted}"/>
+                                <Image Source="{Binding Cover}" Stretch="UniformToFill"/>
+                            </Panel>
+                        </Border>
+                        <Border Classes="playBadge" Width="48" Height="48" CornerRadius="24" Background="{StaticResource SpotifyGreen}"
+                                HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="10" BoxShadow="0 4 14 0 #80000000">
+                            <PathIcon Data="{StaticResource IconPlay}" Width="20" Height="20" Foreground="#0B1016"/>
+                        </Border>
+                        <Button Classes="icon remove" Click="RemovePlaylist_Click" HorizontalAlignment="Right" VerticalAlignment="Top"
+                                Margin="6" Width="28" Height="28" Background="#CC0B1016" ToolTip.Tip="Remove from Trophyline">
+                            <Border Background="#CC0B1016" CornerRadius="14" Width="28" Height="28">
+                                <PathIcon Data="{StaticResource IconClose}" Width="12" Height="12"/>
+                            </Border>
+                        </Button>
+                    </Panel>
+                    <TextBlock Text="{Binding Title}" Margin="2,10,0,0" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                    <TextBlock Text="{Binding KindText}" Margin="2,2,0,0" Classes="muted" FontSize="12"/>
+                </StackPanel>
+            </Button>
+        </DataTemplate>
     </Window.Resources>
 
     <Grid ColumnDefinitions="236,*">
@@ -105,11 +133,41 @@
                     </StackPanel>
                 </Border>
 
+                <!-- Spotify mini-player -->
+                <Border DockPanel.Dock="Bottom" Margin="14,0,14,0" Padding="12,12,12,8" CornerRadius="12" Background="#121A23">
+                    <StackPanel Spacing="8">
+                        <StackPanel Orientation="Horizontal" Spacing="10">
+                            <Border Width="36" Height="36" CornerRadius="8" Background="{StaticResource SpotifyGreen}">
+                                <PathIcon Data="{StaticResource IconMusic}" Width="17" Height="17" Foreground="#0B1016"/>
+                            </Border>
+                            <StackPanel VerticalAlignment="Center" Width="140">
+                                <TextBlock x:Name="MiniTitle" Text="Spotify" FontWeight="SemiBold" FontSize="13" TextTrimming="CharacterEllipsis"/>
+                                <TextBlock x:Name="MiniArtist" Text="" Classes="muted" FontSize="12" TextTrimming="CharacterEllipsis"/>
+                            </StackPanel>
+                        </StackPanel>
+                        <StackPanel x:Name="MiniButtons" Orientation="Horizontal" HorizontalAlignment="Center" Spacing="10">
+                            <Button Classes="icon" Click="Prev_Click" ToolTip.Tip="Previous">
+                                <PathIcon Data="{StaticResource IconPrev}" Width="15" Height="15"/>
+                            </Button>
+                            <Button Classes="icon big" Click="PlayPause_Click" ToolTip.Tip="Play / pause">
+                                <PathIcon x:Name="MiniPlayIcon" Data="{StaticResource IconPlay}" Width="17" Height="17"/>
+                            </Button>
+                            <Button Classes="icon" Click="Next_Click" ToolTip.Tip="Next">
+                                <PathIcon Data="{StaticResource IconNext}" Width="15" Height="15"/>
+                            </Button>
+                        </StackPanel>
+                        <Button x:Name="MiniOpen" Classes="plain" Click="OpenSpotify_Click" HorizontalAlignment="Center" IsVisible="False" Margin="0,0,0,4">
+                            <TextBlock Text="Open Spotify" Foreground="{StaticResource SpotifyGreen}" FontWeight="SemiBold"/>
+                        </Button>
+                    </StackPanel>
+                </Border>
+
                 <StackPanel>
                     <RadioButton x:Name="NavOverview" Classes="nav" GroupName="nav" Tag="{StaticResource IconHome}" Content="Overview" IsChecked="True"/>
                     <RadioButton x:Name="NavAchievements" Classes="nav" GroupName="nav" Tag="{StaticResource IconStar}" Content="Achievements"/>
                     <RadioButton x:Name="NavGames" Classes="nav" GroupName="nav" Tag="{StaticResource IconGame}" Content="Games"/>
                     <RadioButton x:Name="NavStorage" Classes="nav" GroupName="nav" Tag="{StaticResource IconDrive}" Content="Storage"/>
+                    <RadioButton x:Name="NavMusic" Classes="nav" GroupName="nav" Tag="{StaticResource IconMusic}" Content="Music"/>
                 </StackPanel>
             </DockPanel>
         </Border>
@@ -382,6 +440,64 @@
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>
+                </ScrollViewer>
+            </Grid>
+
+            <!-- Music -->
+            <Grid x:Name="MusicPage" RowDefinitions="Auto,*" IsVisible="False">
+                <StackPanel Margin="30,26,30,10">
+                    <TextBlock Text="Music" Classes="pageTitle"/>
+                    <TextBlock Classes="muted" Margin="0,4,0,0" TextWrapping="Wrap"
+                               Text="Play your Spotify playlists in the background while you game. The music plays in the Spotify app, so it keeps going when Trophyline is closed."/>
+
+                    <Border Classes="card" Padding="18" Margin="0,18,0,0">
+                        <Grid ColumnDefinitions="Auto,*,Auto">
+                            <Border Width="64" Height="64" CornerRadius="12" Background="{StaticResource SpotifyGreen}">
+                                <PathIcon Data="{StaticResource IconMusic}" Width="28" Height="28" Foreground="#0B1016"/>
+                            </Border>
+                            <StackPanel Grid.Column="1" Margin="18,0" VerticalAlignment="Center">
+                                <TextBlock x:Name="BigState" Text="NOW PLAYING" Foreground="{StaticResource SpotifyGreen}" FontSize="11" FontWeight="Bold"/>
+                                <TextBlock x:Name="BigTitle" FontSize="22" FontWeight="Bold" TextTrimming="CharacterEllipsis" Margin="0,2,0,0"/>
+                                <TextBlock x:Name="BigArtist" Classes="muted" FontSize="14" TextTrimming="CharacterEllipsis"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
+                                <Button x:Name="BigOpen" Classes="accent" Click="OpenSpotify_Click" Content="Open Spotify" IsVisible="False"/>
+                                <StackPanel x:Name="BigButtons" Orientation="Horizontal" Spacing="12">
+                                    <Button Classes="icon" Click="Prev_Click" ToolTip.Tip="Previous" Width="40" Height="40">
+                                        <PathIcon Data="{StaticResource IconPrev}" Width="18" Height="18"/>
+                                    </Button>
+                                    <Button Classes="icon big" Click="PlayPause_Click" ToolTip.Tip="Play / pause" Width="52" Height="52">
+                                        <PathIcon x:Name="BigPlayIcon" Data="{StaticResource IconPlay}" Width="22" Height="22"/>
+                                    </Button>
+                                    <Button Classes="icon" Click="Next_Click" ToolTip.Tip="Next" Width="40" Height="40">
+                                        <PathIcon Data="{StaticResource IconNext}" Width="18" Height="18"/>
+                                    </Button>
+                                </StackPanel>
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+
+                    <Grid ColumnDefinitions="*,12,Auto" Margin="0,22,0,0">
+                        <TextBox x:Name="PlaylistLink" Classes="search" Watermark="Paste a Spotify playlist, album or artist link…">
+                            <TextBox.InnerLeftContent>
+                                <PathIcon Data="{StaticResource IconMusic}" Width="15" Height="15" Margin="12,0,2,0" Foreground="{StaticResource Muted}"/>
+                            </TextBox.InnerLeftContent>
+                        </TextBox>
+                        <Button Grid.Column="2" Classes="accent" Click="AddPlaylist_Click" Content="Add"/>
+                    </Grid>
+                    <TextBlock x:Name="AddHint" Classes="muted" FontSize="12" Margin="2,8,0,8" TextWrapping="Wrap"
+                               Text="In Spotify: right-click a playlist → Share → Copy link to playlist, then paste it here."/>
+                </StackPanel>
+                <ScrollViewer Grid.Row="1">
+                    <Panel Margin="30,8,12,20">
+                        <ItemsControl x:Name="PlaylistGrid" ItemTemplate="{StaticResource PlaylistCard}">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                        </ItemsControl>
+                        <TextBlock x:Name="MusicEmpty" Classes="muted" IsVisible="False" Margin="0,20,0,0" TextWrapping="Wrap"
+                                   Text="No playlists yet. Add one above and it stays here for next time."/>
+                    </Panel>
                 </ScrollViewer>
             </Grid>
 

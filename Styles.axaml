@@ -139,6 +139,69 @@
         <Setter Property="BorderBrush" Value="{StaticResource Accent}"/>
     </Style>
 
+    <!-- round icon buttons (music controls) -->
+    <Style Selector="Button.icon">
+        <Setter Property="Width" Value="34"/>
+        <Setter Property="Height" Value="34"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="Foreground" Value="{StaticResource Text}"/>
+        <Setter Property="Template">
+            <ControlTemplate>
+                <Border Name="bd" Background="Transparent" CornerRadius="17">
+                    <ContentPresenter Content="{TemplateBinding Content}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                </Border>
+            </ControlTemplate>
+        </Setter>
+    </Style>
+    <Style Selector="Button.icon:pointerover /template/ Border#bd">
+        <Setter Property="Background" Value="#22FFFFFF"/>
+    </Style>
+    <Style Selector="Button.icon.big">
+        <Setter Property="Width" Value="42"/>
+        <Setter Property="Height" Value="42"/>
+        <Setter Property="Foreground" Value="#0B1016"/>
+    </Style>
+    <Style Selector="Button.icon.big /template/ Border#bd">
+        <Setter Property="Background" Value="{StaticResource SpotifyGreen}"/>
+        <Setter Property="CornerRadius" Value="21"/>
+    </Style>
+    <Style Selector="Button.icon.big:pointerover /template/ Border#bd">
+        <Setter Property="Background" Value="#3BE477"/>
+    </Style>
+
+    <Style Selector="Button.accent">
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="Foreground" Value="#0B1016"/>
+        <Setter Property="FontWeight" Value="SemiBold"/>
+        <Setter Property="Template">
+            <ControlTemplate>
+                <Border Name="bd" Background="{StaticResource SpotifyGreen}" CornerRadius="10" Padding="20,0" MinHeight="42">
+                    <ContentPresenter Content="{TemplateBinding Content}" VerticalAlignment="Center"/>
+                </Border>
+            </ControlTemplate>
+        </Setter>
+    </Style>
+    <Style Selector="Button.accent:pointerover /template/ Border#bd">
+        <Setter Property="Background" Value="#3BE477"/>
+    </Style>
+
+    <!-- playlist cards: play badge and remove button appear on hover -->
+    <Style Selector="Button.plain Border.playBadge">
+        <Setter Property="Opacity" Value="0"/>
+        <Setter Property="Transitions">
+            <Transitions><DoubleTransition Property="Opacity" Duration="0:0:0.15"/></Transitions>
+        </Setter>
+    </Style>
+    <Style Selector="Button.plain:pointerover Border.playBadge">
+        <Setter Property="Opacity" Value="1"/>
+    </Style>
+    <Style Selector="Button.plain Button.remove">
+        <Setter Property="Opacity" Value="0"/>
+    </Style>
+    <Style Selector="Button.plain:pointerover Button.remove">
+        <Setter Property="Opacity" Value="1"/>
+    </Style>
+
     <!-- inputs -->
     <Style Selector="TextBox.search">
         <Setter Property="CornerRadius" Value="10"/>

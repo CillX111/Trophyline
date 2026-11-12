@@ -171,6 +171,30 @@ public sealed class AchVM(AchievementInfo a, GameInfo g) : Notify
     string? searchText;
 }
 
+public sealed class PlaylistVM(SavedPlaylist p) : Notify
+{
+    public SavedPlaylist P { get; } = p;
+    public string Title => P.Title;
+    public string KindText => P.Kind switch { "album" => "Album", "artist" => "Artist", _ => "Playlist" };
+
+    Bitmap? cover;
+    bool started;
+    public Bitmap? Cover
+    {
+        get
+        {
+            if (!started && P.Cover.Length > 0) { started = true; _ = Load(); }
+            return cover;
+        }
+    }
+
+    async Task Load()
+    {
+        var bmp = await Img.Cached(P.Cover, PlaylistStore.CoverPath(P), 360);
+        if (bmp != null) await Dispatcher.UIThread.InvokeAsync(() => { cover = bmp; Raise(nameof(Cover)); });
+    }
+}
+
 public sealed class GameVM(GameInfo g)
 {
     public GameInfo G { get; } = g;

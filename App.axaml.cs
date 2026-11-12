@@ -37,6 +37,8 @@ public partial class App : Application
         w.WindowState = WindowState.Normal;
         w.WindowStartupLocation = WindowStartupLocation.Manual;
         w.ShowActivated = false;
+        w.ShowInTaskbar = false;
+        w.IsHitTestVisible = false; // a stray click must not change the page being captured
         w.Position = new PixelPoint(-20000, -20000);
         w.MinHeight = 0;
         w.Width = 1280;

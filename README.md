@@ -38,6 +38,10 @@ The files aren't signed by Microsoft or Apple, so the first launch shows a warni
   hero art, playtime, completion, and every achievement, including the ones still
   to get (easiest first, by global rarity)
 - **Storage**: installed games by size, flags games not played in 6+ months
+- **Music**: save your Spotify playlists, albums or artists (paste a share link) and play
+  them with one click; a mini-player in the sidebar shows the current song with
+  previous / play-pause / next. It controls the Spotify app on your computer, so the
+  music keeps playing when Trophyline is closed. No Spotify login needed.
 
 ## How it works
 

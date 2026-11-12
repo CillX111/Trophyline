@@ -50,6 +50,7 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        AddSettingsTabs();
 
         // Opens maximized; if you un-maximize it, it still fits on the screen.
         if (Screens.Primary is { } screen)
@@ -94,6 +95,13 @@ public partial class MainWindow : Window
         NavLevel.IsCheckedChanged += (_, _) => { if (NavLevel.IsChecked == true && !syncingNav) { ShowPage(LevelPage); AnimateLevelBar(); } };
         NavPlaytime.IsCheckedChanged += (_, _) => { if (NavPlaytime.IsChecked == true && !syncingNav) { BuildPlaytime(); ShowPage(PlaytimePage); } };
         nowTimer.Tick += (_, _) => { if (PlaytimePage.IsVisible) UpdateNowPlaying(); };
+        AutoUpdateSwitch.IsCheckedChanged += (_, _) =>
+        {
+            if (fillingSettings) return;
+            var cfg = Program.Settings();
+            cfg.AutoUpdate = AutoUpdateSwitch.IsChecked == true;
+            Program.SaveSettings(cfg);
+        };
         PopupsSwitch.IsCheckedChanged += (_, _) =>
         {
             if (fillingSettings) return;
@@ -147,11 +155,14 @@ public partial class MainWindow : Window
         Opened += async (_, _) =>
         {
             WatchJournal();
+            ShowWelcomeIfNeeded();
             musicTimer.Start();
             nowTimer.Start();
             _ = RefreshMusic();
             await LoadAsync(online: true);
             ready.TrySetResult();
+            // automatic updates only after the user has seen the notice about them
+            if (Updater.Allowed && App.Args.Length == 0 && Program.Settings().WelcomeAccepted) await RunUpdate(manual: false);
         };
         Activated += async (_, _) =>
         {
@@ -783,6 +794,12 @@ public partial class MainWindow : Window
             var cfg = Program.Settings();
             PauseOnQuitSwitch.IsChecked = cfg.PauseSoundtrackOnQuit;
             PopupsSwitch.IsChecked = cfg.UnlockPopups;
+            AutoUpdateSwitch.IsChecked = cfg.AutoUpdate;
+            if (UpdateStatus.Text is null or "")
+                UpdateStatus.Text = $"You have version {Updater.Current.ToString(3)}."
+                    + (Platform.Mac ? " On macOS, Trophyline tells you about new versions; you download them yourself." : "");
+            DeleteAccountButton.IsEnabled = cfg.OnlineId.Length > 0;
+            if (cfg.OnlineId.Length == 0) DeleteAccountHint.Text = "You don't have an online account on this computer.";
             OnlineSwitch.IsChecked = cfg.OnlineEnabled;
             OnlineSwitch.IsEnabled = Online.Available;
             OnlineNameBox.Text = cfg.OnlineName.Length > 0 ? cfg.OnlineName : data?.PersonaName ?? "";
@@ -1599,6 +1616,150 @@ public partial class MainWindow : Window
 
     // =============== navigation ===============
 
+    // =============== Settings tabs (Settings · Playtime · Storage) ===============
+
+    void AddSettingsTabs()
+    {
+        var hosts = new (Control Page, StackPanel Host)[]
+        {
+            (SettingsPage, (StackPanel)((ScrollViewer)SettingsPage).Content!),
+            (PlaytimePage, (StackPanel)((ScrollViewer)PlaytimePage).Content!),
+            (StoragePage, (StackPanel)((Grid)StoragePage).Children[0]),
+        };
+        int n = 0;
+        foreach (var (page, host) in hosts)
+        {
+            var row = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 16) };
+            foreach (var (label, target) in new (string, Control)[] { ("Settings", SettingsPage), ("Playtime", PlaytimePage), ("Storage", StoragePage) })
+            {
+                var chip = new RadioButton { Content = label, GroupName = $"settingsTabs{n}", IsChecked = target == page };
+                chip.Classes.Add("chip");
+                chip.IsCheckedChanged += (_, _) =>
+                {
+                    if (chip.IsChecked != true || target.IsVisible) return;
+                    if (target == SettingsPage) BuildSettings();
+                    if (target == PlaytimePage) BuildPlaytime();
+                    ShowPage(target);
+                };
+                row.Children.Add(chip);
+            }
+            host.Children.Insert(0, row);
+            n++;
+        }
+    }
+
+    void SyncSettingsTabs(Control page)
+    {
+        var label = page == PlaytimePage ? "Playtime" : page == StoragePage ? "Storage" : "Settings";
+        foreach (var p in new Control[] { SettingsPage, PlaytimePage, StoragePage })
+        {
+            var host = p == StoragePage ? (StackPanel)((Grid)p).Children[0] : (StackPanel)((ScrollViewer)p).Content!;
+            if (host.Children.Count > 0 && host.Children[0] is StackPanel row)
+                foreach (var chip in row.Children.OfType<RadioButton>())
+                    chip.IsChecked = (string?)chip.Content == label;
+        }
+    }
+
+    // =============== first-start notice ===============
+
+    void ShowWelcomeIfNeeded()
+    {
+        if (Program.Settings().WelcomeAccepted || App.Args.Length > 0) return;
+        WelcomeOverlay.IsVisible = true;
+        if (Content is Grid root && root.Children.Count > 0) root.Children[0].IsEnabled = false; // the sidebar
+    }
+
+    void AcceptWelcome_Click(object? sender, RoutedEventArgs e)
+    {
+        var cfg = Program.Settings();
+        cfg.WelcomeAccepted = true;
+        cfg.AutoUpdate = WelcomeAutoUpdate.IsChecked == true;
+        Program.SaveSettings(cfg);
+        WelcomeOverlay.IsVisible = false;
+        if (Content is Grid root && root.Children.Count > 0) root.Children[0].IsEnabled = true;
+        if (Updater.Allowed) _ = RunUpdate(manual: false);
+    }
+
+    // =============== updates ===============
+
+    bool updating;
+
+    async Task RunUpdate(bool manual)
+    {
+        if (updating) return;
+        updating = true;
+        try
+        {
+            UpdateStatus.Text = "Checking for a new version…";
+            var r = await Task.Run(() => Updater.CheckAndInstall(install: manual || Updater.Allowed));
+            if (r == null) { UpdateStatus.Text = "Couldn't reach GitHub to check for updates."; return; }
+            if (!r.Newer) { UpdateStatus.Text = $"You have the newest version ({Updater.Current.ToString(3)})."; return; }
+            if (r.Installed)
+            {
+                Program.RestartTracker(); // the background tracker switches to the new version now
+                UpdateStatus.Text = $"Updated to {r.Latest.ToString(3)}. Restart Trophyline to use it.";
+                UpdateBannerText.Text = $"Trophyline {r.Latest.ToString(3)} is installed.";
+                UpdateBanner.IsVisible = true;
+                return;
+            }
+            UpdateStatus.Text = $"Version {r.Latest.ToString(3)} is out. " + (r.Note ?? "") ;
+            if (Platform.Mac || r.Note != null)
+            {
+                UpdateBannerText.Text = $"Trophyline {r.Latest.ToString(3)} is out.";
+                if (manual) Platform.OpenUrl(Updater.ReleasesPage);
+            }
+        }
+        finally { updating = false; }
+    }
+
+    async void CheckUpdates_Click(object? sender, RoutedEventArgs e)
+    {
+        if (!Updater.Allowed && Environment.ProcessPath?.Contains(System.IO.Path.DirectorySeparatorChar + "bin" + System.IO.Path.DirectorySeparatorChar) == true)
+        { UpdateStatus.Text = "This is a development build, so it doesn't update itself."; return; }
+        await RunUpdate(manual: true);
+    }
+
+    void RestartForUpdate_Click(object? sender, RoutedEventArgs e)
+    {
+        if (Environment.ProcessPath is string exe)
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(exe) { UseShellExecute = false });
+        Close();
+    }
+
+    void HideUpdateBanner_Click(object? sender, RoutedEventArgs e) => UpdateBanner.IsVisible = false;
+
+    // =============== delete account ===============
+
+    DateTime deleteArmed;
+
+    async void DeleteAccount_Click(object? sender, RoutedEventArgs e)
+    {
+        // two clicks within 6 seconds, so it can't happen by accident
+        if (DateTime.Now - deleteArmed > TimeSpan.FromSeconds(6))
+        {
+            deleteArmed = DateTime.Now;
+            DeleteAccountText.Text = "Click again to delete for good";
+            await Task.Delay(6000);
+            if (DateTime.Now - deleteArmed >= TimeSpan.FromSeconds(6)) DeleteAccountText.Text = "Delete account";
+            return;
+        }
+        deleteArmed = default;
+        DeleteAccountButton.IsEnabled = false;
+        DeleteAccountText.Text = "Deleting…";
+        var err = await Online.DeleteAccount();
+        if (err != null)
+        {
+            DeleteAccountText.Text = "Delete account";
+            DeleteAccountButton.IsEnabled = true;
+            DeleteAccountHint.Text = "Couldn't delete it: " + err;
+            return;
+        }
+        DeleteAccountText.Text = "Deleted";
+        DeleteAccountHint.Text = "Your online account is gone from the server. You can join again any time; you'd start as a new player.";
+        seasonIds.Clear();
+        BuildSettings();
+    }
+
     // =============== chat ===============
 
     readonly DispatcherTimer chatTimer = new() { Interval = TimeSpan.FromSeconds(4) };
@@ -1632,7 +1793,7 @@ public partial class MainWindow : Window
             if (!Online.Available) { ChatTitle.Text = "Lobby"; ChatTitleSub.Text = "offline"; return; }
 
             ChatTitle.Text = chatWith == null ? "Lobby" : chatWithName;
-            ChatTitleSub.Text = chatWith == null ? "everyone on Trophyline · be nice" : "private conversation";
+            ChatTitleSub.Text = chatWith == null ? "everyone on Trophyline · messages disappear after 1 hour" : "private · messages disappear after 1 hour";
             ChatProfileButton.IsVisible = ChatBlockButton.IsVisible = chatWith != null;
 
             if (full) await BuildChatRooms();
@@ -1759,7 +1920,7 @@ public partial class MainWindow : Window
         if (err != null) { ChatTitleSub.Text = err; return; }
         chatBlocked = !chatBlocked;
         ChatBlockText.Text = chatBlocked ? "Unblock" : "Block";
-        ChatTitleSub.Text = chatBlocked ? $"Blocked: {chatWithName} can't message you, and you won't see their messages." : "private conversation";
+        ChatTitleSub.Text = chatBlocked ? $"Blocked: {chatWithName} can't message you, and you won't see their messages." : "private · messages disappear after 1 hour";
         if (chatBlocked) { chatLast = 0; ChatMessages.Children.Clear(); await RefreshChat(full: true); }
     }
 
@@ -1772,13 +1933,14 @@ public partial class MainWindow : Window
         if (page != GamePage) currentGame = null;
         foreach (var p in AllPages) p.IsVisible = p == page;
         var nav = page == OverviewPage ? NavOverview : page == AchievementsPage ? NavAchievements
-                : page == StoragePage ? NavStorage : page == PlaytimePage ? NavPlaytime : page == LevelPage ? NavLevel : page == LeaderboardPage || page == PlayerPage ? NavLeaderboard : page == ShopPage ? NavShop : page == ChatPage ? NavChat : page == MusicPage ? NavMusic : page == SettingsPage ? NavSettings : NavGames;
+                : page == StoragePage || page == PlaytimePage ? NavSettings : page == LevelPage ? NavLevel : page == LeaderboardPage || page == PlayerPage ? NavLeaderboard : page == ShopPage ? NavShop : page == ChatPage ? NavChat : page == MusicPage ? NavMusic : page == SettingsPage ? NavSettings : NavGames;
         if (nav.IsChecked != true)
         {
             syncingNav = true;
             nav.IsChecked = true;
             syncingNav = false;
         }
+        if (page == SettingsPage || page == PlaytimePage || page == StoragePage) SyncSettingsTabs(page);
         _ = FadeIn(page);
     }
 
@@ -1831,6 +1993,7 @@ public partial class MainWindow : Window
             case "storage": NavStorage.IsChecked = true; break;
             case "playtime": NavPlaytime.IsChecked = true; break;
             case "level": NavLevel.IsChecked = true; break;
+            case "welcome": WelcomeOverlay.IsVisible = true; break;
             case "shop": NavShop.IsChecked = true; break;
             case "chat":
                 if (arg != null) _ = OpenChat(arg, "NightOwl"); else NavChat.IsChecked = true;

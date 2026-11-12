@@ -94,6 +94,26 @@ static class Online
         return (await Rpc("tl_delete", Me())).Error;
     }
 
+    /// Deletes your account from the server (profile, scores, picture, messages) and forgets this
+    /// computer's id and secret, so joining again starts a new player. Returns an error text or null.
+    public static async Task<string?> DeleteAccount()
+    {
+        var cfg = Program.Settings();
+        if (cfg.OnlineId.Length == 0) return null;
+        if (Available)
+        {
+            var (_, err) = await Rpc("tl_delete", Me());
+            if (err != null) return err;
+        }
+        cfg = Program.Settings();
+        cfg.OnlineEnabled = false;
+        cfg.OnlineId = "";
+        cfg.OnlineSecret = "";
+        cfg.AvatarHash = "";
+        Program.SaveSettings(cfg);
+        return null;
+    }
+
     static DateTime lastUpload;
 
     /// Sends your current numbers. Returns an error text, or null when it worked (or was skipped).

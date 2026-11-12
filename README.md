@@ -101,6 +101,7 @@ Trophyline --install     start the tracker now + at every login, add to Start me
 Trophyline --uninstall   undo --install and stop the tracker (journal is kept)
 Trophyline --stop        stop the tracker
 Trophyline --update      scan once and update the journal
+Trophyline --self-update install the newest version now (Windows, Linux)
 ```
 
 Data folder: `%LOCALAPPDATA%\Trophyline` (Windows), `~/Library/Application Support/Trophyline`

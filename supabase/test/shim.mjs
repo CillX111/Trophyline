@@ -15,6 +15,11 @@ await db.exec(`
 `);
 await db.exec(readFileSync(new URL("../trophyline.sql", import.meta.url), "utf8"));
 console.log("trophyline.sql loaded");
+// EXTRA_SQL=file1;file2 runs more scripts (e.g. a fix snippet, or test data)
+for (const f of (process.env.EXTRA_SQL || "").split(";").filter(Boolean)) {
+  await db.exec(readFileSync(f, "utf8"));
+  console.log(`${f} loaded`);
+}
 
 // named arguments, like PostgREST:  select fn(a => $1, b => $2)
 async function rpc(fn, args) {

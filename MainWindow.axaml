@@ -185,8 +185,8 @@
                     <RadioButton x:Name="NavLeaderboard" Classes="nav" GroupName="nav" Tag="{StaticResource IconPodium}" Content="Leaderboards"/>
                     <RadioButton x:Name="NavChat" Classes="nav" GroupName="nav" Tag="{StaticResource IconChat}" Content="Chat"/>
                     <RadioButton x:Name="NavShop" Classes="nav" GroupName="nav" Tag="{StaticResource IconCart}" Content="Shop"/>
-                    <RadioButton x:Name="NavPlaytime" Classes="nav" GroupName="nav" Tag="{StaticResource IconClock}" Content="Playtime"/>
-                    <RadioButton x:Name="NavStorage" Classes="nav" GroupName="nav" Tag="{StaticResource IconDrive}" Content="Storage"/>
+                    <RadioButton x:Name="NavPlaytime" IsVisible="False" Classes="nav" GroupName="nav" Tag="{StaticResource IconClock}" Content="Playtime"/>
+                    <RadioButton x:Name="NavStorage" IsVisible="False" Classes="nav" GroupName="nav" Tag="{StaticResource IconDrive}" Content="Storage"/>
                     <RadioButton x:Name="NavMusic" Classes="nav" GroupName="nav" Tag="{StaticResource IconMusic}" Content="Music"/>
                     <RadioButton x:Name="NavSettings" Classes="nav" GroupName="nav" Tag="{StaticResource IconSettings}" Content="Settings"/>
                 </StackPanel>
@@ -692,7 +692,7 @@
                 <StackPanel Grid.ColumnSpan="2" Margin="0,0,0,16">
                     <TextBlock Text="Chat" Classes="pageTitle"/>
                     <TextBlock x:Name="ChatSub" Classes="muted" Margin="0,4,0,0" TextWrapping="Wrap"
-                               Text="Talk to everyone in the lobby, or message a player privately (open their profile → Message)."/>
+                               Text="Talk to everyone in the lobby, or message a player privately (open their profile → Message). Messages disappear after 1 hour."/>
                 </StackPanel>
 
                 <!-- conversations -->
@@ -893,6 +893,20 @@
                         </StackPanel>
                     </Border>
 
+                    <TextBlock Text="Updates" Classes="section" Margin="0,20,0,4"/>
+                    <Border Classes="card" Padding="16,12" Margin="0,10,0,10">
+                        <StackPanel Spacing="10">
+                            <Grid ColumnDefinitions="*,Auto">
+                                <ToggleSwitch x:Name="AutoUpdateSwitch" OnContent="" OffContent="" Padding="0" MinWidth="0"
+                                              Content="Update Trophyline automatically"/>
+                                <Button Grid.Column="1" Classes="pill" Click="CheckUpdates_Click" VerticalAlignment="Center">
+                                    <TextBlock Text="Check now"/>
+                                </Button>
+                            </Grid>
+                            <TextBlock x:Name="UpdateStatus" Classes="muted" FontSize="12" TextWrapping="Wrap"/>
+                        </StackPanel>
+                    </Border>
+
                     <TextBlock Text="Game soundtracks" Classes="section" Margin="0,20,0,4"/>
                     <TextBlock Classes="muted" FontSize="13" Margin="0,0,0,14" TextWrapping="Wrap"
                                Text="Give a game a playlist on its page (Games → pick a game → Soundtrack). The background tracker starts it when you launch the game, even when this window is closed."/>
@@ -903,8 +917,56 @@
                             <TextBlock x:Name="SoundtrackCount" Classes="muted" FontSize="12" Margin="0,2,0,0" TextWrapping="Wrap"/>
                         </StackPanel>
                     </Border>
+
+                    <TextBlock Text="Delete account" Classes="section" Margin="0,26,0,4" Foreground="#FF6B6B"/>
+                    <Border Classes="card" Padding="16,12" BorderBrush="#66FF6B6B">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <StackPanel VerticalAlignment="Center" Margin="0,0,16,0">
+                                <TextBlock Text="Delete my online account" FontWeight="SemiBold"/>
+                                <TextBlock x:Name="DeleteAccountHint" Classes="muted" FontSize="12" TextWrapping="Wrap"
+                                           Text="Removes your profile, scores, season history, profile picture and every chat message you wrote from the server, for good. Your Steam data, levels and shop items on this computer stay."/>
+                            </StackPanel>
+                            <Button x:Name="DeleteAccountButton" Grid.Column="1" Click="DeleteAccount_Click" VerticalAlignment="Center" Cursor="Hand"
+                                    Background="#33FF6B6B" Foreground="#FF8A8A" BorderBrush="#FF6B6B" BorderThickness="1" CornerRadius="10" Padding="16,9">
+                                <TextBlock x:Name="DeleteAccountText" Text="Delete account" FontWeight="SemiBold"/>
+                            </Button>
+                        </Grid>
+                    </Border>
                 </StackPanel>
             </ScrollViewer>
+
+            <!-- first-start notice about automatic updates (shown once to everyone) -->
+            <Border x:Name="WelcomeOverlay" IsVisible="False" Background="#E60B1016">
+                <Border Classes="card" MaxWidth="580" Padding="30,26" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="24"
+                        BorderBrush="{StaticResource Gold}" BoxShadow="0 12 40 0 #A0000000">
+                    <StackPanel Spacing="12">
+                        <StackPanel Orientation="Horizontal" Spacing="12">
+                            <PathIcon Data="{StaticResource IconDownload}" Width="28" Height="28" Foreground="{StaticResource Gold}"/>
+                            <TextBlock Text="Trophyline updates itself" FontSize="24" FontWeight="Bold" VerticalAlignment="Center"/>
+                        </StackPanel>
+                        <TextBlock TextWrapping="Wrap"
+                                   Text="When a new version comes out, Trophyline downloads it from its GitHub page in the background and installs it by itself. You don't have to do anything."/>
+                        <TextBlock Classes="muted" TextWrapping="Wrap" FontSize="13"
+                                   Text="&#8226; It checks when you open the window and about twice a day in the background.&#10;&#8226; Every download is checked against the release's fingerprint before it's installed.&#10;&#8226; The new version starts the next time you open Trophyline (or right away with &quot;Restart now&quot;).&#10;&#8226; On macOS it only tells you that a new version is out."/>
+                        <CheckBox x:Name="WelcomeAutoUpdate" IsChecked="True" Margin="0,4,0,0"
+                                  Content="Keep automatic updates on (you can change this any time in Settings)"/>
+                        <Button Classes="primary" Click="AcceptWelcome_Click" HorizontalAlignment="Right" Margin="0,6,0,0" Content="Got it"/>
+                    </StackPanel>
+                </Border>
+            </Border>
+
+            <!-- "Updated" banner -->
+            <Border x:Name="UpdateBanner" IsVisible="False" HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,22"
+                    CornerRadius="14" Padding="18,12" Background="#F2151C25" BorderBrush="{DynamicResource Accent}" BorderThickness="1"
+                    BoxShadow="0 8 30 0 #90000000">
+                <StackPanel Orientation="Horizontal" Spacing="16">
+                    <TextBlock x:Name="UpdateBannerText" VerticalAlignment="Center" FontWeight="SemiBold"/>
+                    <Button Classes="primary" Click="RestartForUpdate_Click" MinHeight="0" Padding="0">
+                        <TextBlock Text="Restart now" Margin="0,8"/>
+                    </Button>
+                    <Button Classes="pill" Click="HideUpdateBanner_Click" VerticalAlignment="Center"><TextBlock Text="Later"/></Button>
+                </StackPanel>
+            </Border>
 
             <!-- "Level up!" banner -->
             <Border x:Name="LevelUpBanner" IsVisible="False" HorizontalAlignment="Center" VerticalAlignment="Top" Margin="0,22,0,0"

@@ -26,7 +26,8 @@ static class Program
         "Trophyline --uninstall   undo --install and stop the tracker\n" +
         "Trophyline --background  run the tracker (no window)\n" +
         "Trophyline --stop        stop the tracker\n" +
-        "Trophyline --update      scan Steam once and update the journal";
+        "Trophyline --update      scan Steam once and update the journal\n" +
+        "Trophyline --self-update install the newest Trophyline now (Windows, Linux)";
 
     [STAThread]
     static int Main(string[] args)
@@ -44,6 +45,7 @@ static class Program
                 "--selftest" => SelfTest(),       // dev check: summary of the Steam data the window would show
                 "--background" => Run(),
                 "--update" => UpdateOnce(),
+                "--self-update" => SelfUpdate(),
                 "--stop" => Stop(true),
                 "--install" => Install(),
                 "--uninstall" => Uninstall(),
@@ -81,7 +83,14 @@ static class Program
     static int Run()
     {
         using var mutex = new Mutex(true, InstanceKey + "_run", out bool firstInstance);
-        if (!firstInstance) return 0;
+        if (!firstInstance)
+        {
+            // started by the old tracker right after an update: wait for it to exit and take over
+            if (!Environment.GetCommandLineArgs().Contains("--after-update")) return 0;
+            try { if (!mutex.WaitOne(TimeSpan.FromSeconds(30))) return 0; }
+            catch (AbandonedMutexException) { }
+        }
+        Updater.CleanUp();
         File.WriteAllText(PidFile, Environment.ProcessId.ToString());
         Platform.LowPriority();
 
@@ -90,6 +99,7 @@ static class Program
         watcher.Start(); // also catches up on anything unlocked while it wasn't running
         using var games = new GameMonitor(steamFolder);
         games.Start();   // plays a game's soundtrack when you launch it
+        using var updates = Updater.StartBackgroundChecks(); // twice a day
         Platform.TrimMemory();
 
         Thread.Sleep(Timeout.Infinite); // sleeps here with no CPU use; --stop ends the process
@@ -106,6 +116,16 @@ static class Program
             : $"Added {added} achievement(s). The journal has {total}.");
     }
 
+    static int SelfUpdate()
+    {
+        var r = Updater.CheckAndInstall().GetAwaiter().GetResult();
+        if (r == null) return Fail("Couldn't reach GitHub to check for updates.");
+        if (!r.Newer) return Say($"Trophyline {Updater.Current.ToString(3)} is the newest version.");
+        if (!r.Installed) return Fail($"Trophyline {r.Latest.ToString(3)} is out. {r.Note ?? ""}\n{Updater.ReleasesPage}");
+        if (TrackerRunning()) RestartTracker();
+        return Say($"Updated Trophyline {Updater.Current.ToString(3)} -> {r.Latest.ToString(3)}.");
+    }
+
     static Process? TrackerProcess()
     {
         try
@@ -118,6 +138,13 @@ static class Program
     }
 
     internal static bool TrackerRunning() => TrackerProcess() != null;
+
+    /// After an update: stop the old tracker and start the new program as the tracker.
+    internal static void RestartTracker()
+    {
+        Stop(false);
+        EnsureTrackerRunning();
+    }
 
     static void EnsureTrackerRunning()
     {
@@ -299,6 +326,10 @@ public sealed class Config
     public Dictionary<string, string> Links { get; set; } = new();
     /// Fingerprint of the profile picture last uploaded (so it's only sent when it changes).
     public string AvatarHash { get; set; } = "";
+    /// Install new versions automatically (Windows and Linux).
+    public bool AutoUpdate { get; set; } = true;
+    /// The first-start notice was read and accepted.
+    public bool WelcomeAccepted { get; set; }
     /// Accent colour of the window, e.g. "#66C0F4".
     public string Accent { get; set; } = Palette.Default;
 }

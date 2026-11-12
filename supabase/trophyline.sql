@@ -47,6 +47,7 @@ create table if not exists messages (
 );
 create index if not exists messages_room on messages (room, id);
 create index if not exists messages_sender on messages (sender, id desc);
+create index if not exists messages_time on messages (time);
 
 create table if not exists blocks (
   player  text not null references players(id) on delete cascade,
@@ -310,7 +311,8 @@ begin
   select time into last_time from messages where sender = me order by id desc limit 1;
   if last_time is not null and v_now - last_time < 2 then raise exception 'slow down a little'; end if;
   insert into messages (room, sender, text, time) values (v_room, me, v_text, v_now) returning id into new_id;
-  if random() < 0.05 then delete from messages where room = 'lobby' and time < v_now - 30 * 86400; end if;
+  -- chats only last an hour: older messages (lobby and private) are deleted
+  delete from messages where time < v_now - 3600;
   return jsonb_build_object('ok', true, 'id', new_id);
 end $$;
 
@@ -319,7 +321,7 @@ set search_path = public, extensions as $$
   select jsonb_build_object('room', p_room, 'messages', coalesce(jsonb_agg(to_jsonb(r) order by r.id), '[]'::jsonb)) from (
     select m.id, m.sender, m.text, m.time, pl.name, pl.level, coalesce(pl.profile->>'icon', '') as icon, pl.avatar_ver as avatar
     from messages m join players pl on pl.id = m.sender
-    where m.room = p_room and m.id > coalesce(p_after, 0)
+    where m.room = p_room and m.id > coalesce(p_after, 0) and m.time > tl_now() - 3600
       and (p_viewer is null or m.sender not in (select blocked from blocks where player = p_viewer))
     order by m.id desc limit 100) r
 $$;
@@ -351,7 +353,7 @@ begin
              lm.id as last_id,
              jsonb_build_object('id', lm.id, 'sender', lm.sender, 'text', lm.text, 'time', lm.time) as last
       from (select room, max(id) as last_id from messages
-            where room like 'dm:' || me || ':%' or room like 'dm:%:' || me group by room
+            where (room like 'dm:' || me || ':%' or room like 'dm:%:' || me) and time > tl_now() - 3600 group by room
             order by last_id desc limit 50) r
       join messages lm on lm.id = r.last_id
       join players other on other.id = case when split_part(r.room, ':', 2) = me

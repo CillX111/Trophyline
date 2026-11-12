@@ -43,6 +43,8 @@ jobs:
           chmod +x pkg/Trophyline/Trophyline
           printf 'Trophyline %s for Linux (x64)\n\nRun:      ./Trophyline\nInstall:  ./Trophyline --install   (starts the tracker at login and adds Trophyline to your app menu)\nRemove:   ./Trophyline --uninstall\n\nKeep this folder where it is after installing (for example in ~/Applications).\n' "$version" > pkg/Trophyline/README.txt
           tar -C pkg -czf dist/Trophyline-linux-x64.tar.gz Trophyline
+          # the bare program too, for automatic updates
+          cp out/Trophyline dist/Trophyline-linux-x64
       - uses: actions/upload-artifact@v4
         with: { name: linux, path: dist/* }
 
@@ -117,6 +119,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # fingerprints: automatic updates only install a download that matches these
+          (cd files && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt)
           cat > notes.md <<'EOF'
           ## Downloads
 
@@ -128,6 +132,7 @@ jobs:
           | **Linux** (x64) | `Trophyline-linux-x64.tar.gz` |
 
           No install and no .NET needed. Steam must be installed and signed in.
+          Trophyline updates itself on Windows and Linux (turn it off in Settings); on macOS it tells you when there's a new version.
 
           **Start with your computer:** run the app once with `--install` (Windows: `Trophyline.exe --install`, Linux: `./Trophyline --install`, macOS: `Trophyline.app/Contents/MacOS/Trophyline --install`). It adds a tiny background tracker and a Start menu / app menu entry.
 

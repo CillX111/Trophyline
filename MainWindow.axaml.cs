@@ -236,13 +236,14 @@ public partial class MainWindow : Window
         foreach (var a in unlocked)
             a.Group = a.A.Time is long t ? Fmt.Local(t).ToString("MMMM yyyy") : "Earlier (Steam has no date)";
 
+        sessions = SessionLog.Load();
+        BuildLevel(d); // first: it adds up XP, which the achievement rows show
         BuildProfile();
         BuildOverview();
         BuildAchievements();
         BuildGames();
         BuildStorage();
         BuildPlaytime();
-        BuildLevel(d);
         if (currentGame != null && games.FirstOrDefault(g => g.G.AppId == currentGame.G.AppId) is GameVM again)
             FillGamePage(again, animate: false);
     }
@@ -1149,7 +1150,7 @@ public partial class MainWindow : Window
         LevelBadgeText.Text = r.Level.ToString();
         LevelBadge.Background = rankBrush;
         SideLevel.Text = $"Level {r.Level}  ·  {title}";
-        SideXp.Text = $"{r.Into:N0} / {r.Need:N0} XP";
+        SideXp.Text = $"{r.Into:N0} / {r.Need:N0}";
         SideXpBar.Value = frac;
 
         // Level page
@@ -1157,7 +1158,10 @@ public partial class MainWindow : Window
         BigRing.Stroke = rankBrush;
         RankTitle.Text = title;
         RankTitle.Foreground = rankBrush;
-        TotalXp.Text = $"{r.Total:N0} XP in total";
+        var mult = Xp.MultFor(r.Level);
+        TotalXp.Text = $"{r.Total:N0} XP in total"
+                       + (mult > 1 ? $"  ·  your rank gives ×{mult:0.00} XP" : "  ·  reach Explorer for an XP multiplier")
+                       + (r.Bonus > 0 ? $"  ·  {r.Bonus:N0} XP from rank bonuses" : "");
         XpToNext.Text = $"{r.Into:N0} / {r.Need:N0} XP  ·  {r.Need - r.Into:N0} to level {r.Level + 1}";
         NextRankText.Text = Xp.NextRank(r.Level) is (int lv, string next) ? $"Next rank: {next} at level {lv}" : "Highest rank reached!";
         if (LevelPage.IsVisible) BigXpBar.Value = frac;
@@ -1173,7 +1177,7 @@ public partial class MainWindow : Window
         }
 
         RankRoad.Children.Clear();
-        foreach (var (from, name, hex) in Xp.Ranks)
+        foreach (var (from, name, hex, rankMult) in Xp.Ranks)
         {
             bool reached = r.Level >= from, current = Xp.RankFor(r.Level).Title == name;
             var c = Fmt.Brush(hex);
@@ -1181,7 +1185,7 @@ public partial class MainWindow : Window
             sp.Children.Add(new PathIcon { Data = Icon("IconShield"), Width = 20, Height = 20, Foreground = reached ? c : Res("Line") });
             var t = new StackPanel();
             t.Children.Add(new TextBlock { Text = name, FontWeight = FontWeight.SemiBold, Foreground = reached ? Res("Text") : Res("Muted") });
-            t.Children.Add(new TextBlock { Text = $"level {from}+", FontSize = 11, Foreground = Res("Muted") });
+            t.Children.Add(new TextBlock { Text = $"level {from}+" + (rankMult > 1 ? $"  ·  ×{rankMult:0.00} XP" : ""), FontSize = 11, Foreground = reached ? c : Res("Muted") });
             sp.Children.Add(t);
             var chip = new Border
             {

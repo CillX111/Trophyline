@@ -143,8 +143,8 @@
                         </StackPanel>
                         <StackPanel Spacing="4">
                             <DockPanel>
-                                <TextBlock x:Name="SideXp" DockPanel.Dock="Right" FontSize="11" Classes="muted"/>
-                                <TextBlock x:Name="SideLevel" FontSize="12" FontWeight="SemiBold"/>
+                                <TextBlock x:Name="SideXp" DockPanel.Dock="Right" FontSize="11" Classes="muted" Margin="6,0,0,0" ToolTip.Tip="XP into this level"/>
+                                <TextBlock x:Name="SideLevel" FontSize="12" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
                             </DockPanel>
                             <ProgressBar x:Name="SideXpBar" Classes="thin" Background="{StaticResource Line}" Foreground="{DynamicResource Accent}"/>
                         </StackPanel>

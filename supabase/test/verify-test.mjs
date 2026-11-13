@@ -216,9 +216,12 @@ if (process.env.KEEP !== "1") {
 
   r = await fn({ action: "verify", ...me });
   check("verify reads Steam", r.ok && r.state === "ok" && !r.partial, r);
-  check("XP worked out from Steam", r.xp === 2290 && r.level === tl(2290), { xp: r.xp, level: r.level });
+  const seasonNow = (await query("select tl_season() as s"))[0].s;
+  const refA = walkXp(account(A).games, { start: Number(seasonNow.start), end: Number(seasonNow.end) });
+  const xpA = refA.total;
+  check("XP worked out from Steam, with rank multipliers", r.xp === xpA && xpA > 2290 && r.level === tl(xpA), { xp: r.xp, expected: xpA, level: r.level });
   check("counts from Steam", r.perfect === 2 && r.over75 === 2 && r.unlocked === 30 && r.games === 3 && r.hours === 15, r);
-  check("season XP from unlock dates", r.season_xp === 1780, r.season_xp);
+  check("season XP from unlock dates, with rank multipliers", r.season_xp === refA.season && refA.season > 1780, { got: r.season_xp, expected: refA.season });
   check("cheat check flags the 0-playtime instant 100%", r.flagged === true, r);
   let pl = (await query(`select flags, ranked from players where id = '${me.id}'`))[0];
   check("flags say why", /app 400/.test(pl.flags) && /no playtime/.test(pl.flags) && pl.ranked === false, pl);
@@ -233,25 +236,25 @@ if (process.env.KEEP !== "1") {
   // the owner approves
   await sql(`update players set approve = true where id = '${me.id}'`);
   lb = await rpc("tl_leaderboard", { p_board: "xp", p_me: me.id });
-  check("approved player is ranked right away", lb.rows.length === 1 && lb.rows[0].value === 2290, lb.rows);
+  check("approved player is ranked right away", lb.rows.length === 1 && lb.rows[0].value === xpA, lb.rows);
   await sql(`update players set v_next = 0 where id = '${me.id}'`);
   r = await fn({ action: "verify", ...me });
   check("after approval the old unlocks don't flag again", r.ok && r.flagged === false, r);
   pl = (await query(`select ranked, approve, xp, level from players where id = '${me.id}'`))[0];
-  check("still ranked with Steam's numbers", pl.ranked && !pl.approve && pl.xp === 2290, pl);
+  check("still ranked with Steam's numbers", pl.ranked && !pl.approve && pl.xp === xpA, pl);
 
   // client upload after verification can't change the numbers
   await rpc("tl_upsert", { p: { id: me.id, secret: me.secret, name: "Alice", xp: 9999999, level: 300, perfect: 999, over75: 999 } }).catch(() => {});
   await new Promise((res) => setTimeout(res, 11000)); // tl_upsert allows one upload per 10 s
   const up = await rpc("tl_upsert", { p: { id: me.id, secret: me.secret, name: "Fake Name", xp: 9999999, level: 300, perfect: 999, over75: 999, seasons: [{ id: "2026-4", xp: 999999 }] } });
   pl = (await query(`select name, xp, perfect from players where id = '${me.id}'`))[0];
-  check("uploads from the app can't change verified numbers", up.ok && pl.xp === 2290 && pl.perfect === 2, { up, pl });
+  check("uploads from the app can't change verified numbers", up.ok && pl.xp === xpA && pl.perfect === 2, { up, pl });
   check("the name stays the Steam name (the app can't set another)", pl.name === "Alice", pl);
   account(A).name = "Alice Renamed"; // renamed in Steam
   await sql(`update players set v_next = 0 where id = '${me.id}'`);
   r = await fn({ action: "verify", ...me });
   pl = (await query(`select name, xp from players where id = '${me.id}'`))[0];
-  check("a new Steam name is picked up at the next check", r.ok && pl.name === "Alice Renamed" && pl.xp === 2290, { r, pl });
+  check("a new Steam name is picked up at the next check", r.ok && pl.name === "Alice Renamed" && pl.xp === xpA, { r, pl });
   const vs = await rpc("tl_verify_status", { p_id: me.id, p_secret: me.secret });
   check("the app reads the name from the server", vs.name === "Alice Renamed", vs);
   account(A).name = "Alice";
@@ -275,7 +278,7 @@ if (process.env.KEEP !== "1") {
   const fakePic = await rpc("tl_srv_avatar", { p_id: me.id, p_hash: "x", p_data: null });
   check("app key can't set pictures as the server", !!fakePic.httpError, fakePic);
   lb = await rpc("tl_leaderboard", { p_board: "season", p_me: me.id });
-  check("season board uses Steam's season XP", lb.rows.length === 1 && lb.rows[0].value === 1780, lb.rows);
+  check("season board uses Steam's season XP", lb.rows.length === 1 && lb.rows[0].value === refA.season, lb.rows);
   const prof = await rpc("tl_player", { p_id: me.id });
   check("profile shows verified", prof.verified === true && prof.places.xp === 1, prof);
   check("best games come from Steam", prof.profile.topGames?.[0]?.name === "Game 400" && prof.profile.topGames[1].name === "Game 200"
@@ -343,7 +346,7 @@ if (process.env.KEEP !== "1") {
   await new Promise((res) => setTimeout(res, 4000)); // the app waits 4 s between parts too
   r = await fn({ action: "verify", id: reg2.id, secret: reg2.secret });
   check("big library: rest after the pause", r.ok && r.partial === false && r.unlocked === 130 && r.games === 130, r);
-  check("big library XP", r.xp === 130 * 15 + 130 * 50 + 10 * 130, r.xp);
+  check("big library XP, with rank multipliers", r.xp === walkXp(account(B).games).total, { got: r.xp, expected: walkXp(account(B).games).total });
 
   // reports
   r = await rpc("tl_report", { p_id: reg2.id, p_secret: reg2.secret, p_target: me.id, p_reason: "100% in one second" });
@@ -378,6 +381,32 @@ if (process.env.KEEP !== "1") {
 }
 
 function tl(xp) { let l = 1; while (xp >= 200 + 75 * (l - 1)) { xp -= 200 + 75 * (l - 1); l++; } return l; }
+
+// the rank multiplier walk (Xp.Compute in the app, tl_walk_xp on the server), from the fake Steam data:
+// undated XP counts as it is, then dated gains oldest first, times the multiplier of the rank at that moment
+function mult100(l) { return l >= 150 ? 200 : l >= 130 ? 190 : l >= 110 ? 175 : l >= 90 ? 160 : l >= 75 ? 150 : l >= 60 ? 140
+  : l >= 45 ? 130 : l >= 30 ? 120 : l >= 20 ? 115 : l >= 10 ? 110 : l >= 5 ? 105 : 100; }
+function walkXp(games, season) {
+  const ev = []; let all = 0, minutes = 0;
+  for (const g of Object.values(games)) {
+    minutes += g.minutes;
+    if (!g.stats) continue;
+    const got = g.ach.filter((a) => a.got);
+    for (const a of got) { const x = xpFor(a.pct ?? null); all += x; if (a.time > 0) ev.push([a.time, x]); }
+    const times = got.map((a) => a.time).filter((t) => t > 0);
+    if (got.length > 0) { all += 50; if (times.length) ev.push([Math.min(...times), 50]); }
+    if (g.ach.length > 0 && got.length >= g.ach.length) { all += 500; if (times.length) ev.push([Math.max(...times), 500]); }
+  }
+  all += 10 * Math.floor(minutes / 60);
+  let total = all - ev.reduce((s, e) => s + e[1], 0), seasonXp = 0;
+  ev.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  for (const [t, x] of ev) {
+    const got = Math.round((x * mult100(tl(total))) / 100);
+    total += got;
+    if (season && t >= season.start && t < season.end) seasonXp += got;
+  }
+  return { total, season: seasonXp };
+}
 
 // ---------- KEEP=1: serve the function for the app ----------
 // Fake Steam account 76561198000000009 has three games; the app's sign-in is simulated by

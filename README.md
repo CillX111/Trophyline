@@ -48,7 +48,7 @@ The files aren't signed by Microsoft or Apple, so the first launch shows a warni
   first achievement in a game (50), 100% completion (500), every hour played (10) and
   every tracked session of 15+ minutes (20). Your level and XP bar sit in the sidebar;
   the Level page shows ranks (Rookie → Explorer → Hunter → Veteran → Elite → Master →
-  Legend, Mythic, Immortal, Titan, Celestial, Eternal), where your XP comes from and recent gains. Pop-ups show the XP you earned
+  Legend, Mythic, Immortal, Titan, Celestial, Eternal; each rank multiplies the XP you earn while you hold it, from ×1.05 up to ×2), where your XP comes from and recent gains. Pop-ups show the XP you earned
   and a "Level up!" card when you reach a new level
 - **Leaderboards** (online, log in with Steam, Steam-verified): Season XP, Highest XP, Most completed games and
   Most games over 75%, plus every season's champions. Click anyone to see their

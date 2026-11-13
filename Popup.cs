@@ -221,7 +221,7 @@ public sealed class PopupWindow : Window
         var xpPill = new Border
         {
             CornerRadius = new CornerRadius(8), Padding = new Thickness(7, 1), Background = Fmt.Tint(rare ? Fmt.Gold : Palette.Brush, 0x30),
-            Child = new TextBlock { Text = $"+{Xp.ForAchievement(it.Rarity)} XP", FontSize = 11, FontWeight = FontWeight.Bold, Foreground = rare ? Fmt.Gold : Palette.Brush },
+            Child = new TextBlock { Text = $"+{Xp.Boost(Xp.ForAchievement(it.Rarity), Math.Max(Xp.CurrentLevel, Xp.LastSeenLevel()))} XP", FontSize = 11, FontWeight = FontWeight.Bold, Foreground = rare ? Fmt.Gold : Palette.Brush },
         };
         var headRow = new DockPanel();
         DockPanel.SetDock(xpPill, Dock.Right);

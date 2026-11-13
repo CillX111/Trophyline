@@ -718,7 +718,55 @@ create or replace function tl_rank(p_level int) returns text language sql immuta
               else 'Rookie' end
 $$;
 
--- XP from achievements, first achievements in a game and 100%s dated inside a season
+-- each rank multiplies the XP you earn while you hold it (same table as Xp.Ranks in the app)
+create or replace function tl_mult(p_level int) returns numeric language sql immutable as $$
+  select case when p_level >= 150 then 2.00 when p_level >= 130 then 1.90 when p_level >= 110 then 1.75
+              when p_level >= 90 then 1.60 when p_level >= 75 then 1.50 when p_level >= 60 then 1.40
+              when p_level >= 45 then 1.30 when p_level >= 30 then 1.20 when p_level >= 20 then 1.15
+              when p_level >= 10 then 1.10 when p_level >= 5 then 1.05 else 1.00 end
+$$;
+
+-- a player's dated gains before multipliers: achievements, first achievement in each game, each 100%
+create or replace function tl_xp_events(p_player text) returns table (t bigint, x int) language sql stable as $$
+  select time, xp from steam_unlocks where player = p_player and time > 0
+  union all
+  select min(time), 50 from steam_unlocks where player = p_player and time > 0 group by appid
+  union all
+  select max(u.time), 500 from steam_games g join steam_unlocks u on u.player = g.player and u.appid = g.appid
+  where g.player = p_player and g.total > 0 and g.achieved >= g.total and u.time > 0 group by g.appid
+$$;
+
+-- total XP with rank multipliers, worked out like Xp.Compute in the app: p_all is the XP before multipliers;
+-- the part without a date (hours played, undated unlocks) counts as it is, then every dated gain (achievement,
+-- first achievement in a game, 100%), oldest first, is multiplied by the rank the player had at that moment.
+-- Also returns the multiplied XP dated inside seasons s1 and s2.
+create or replace function tl_walk_xp(p_player text, p_all bigint, s1 jsonb, s2 jsonb,
+                                      out total bigint, out season1 bigint, out season2 bigint)
+language plpgsql stable as $$
+declare
+  e record;
+  lvl int := 1;
+  left_xp bigint;
+  got bigint;
+  dated bigint;
+begin
+  select coalesce(sum(ev.x), 0) into dated from tl_xp_events(p_player) ev;
+
+  total := greatest(coalesce(p_all, 0) - dated, 0);
+  season1 := 0; season2 := 0;
+  left_xp := total;
+  while left_xp >= 200 + 75 * (lvl - 1) loop left_xp := left_xp - (200 + 75 * (lvl - 1)); lvl := lvl + 1; end loop;
+  for e in select ev.t, ev.x from tl_xp_events(p_player) ev order by ev.t, ev.x loop
+    got := round(e.x * tl_mult(lvl));
+    total := total + got;
+    left_xp := left_xp + got;
+    while left_xp >= 200 + 75 * (lvl - 1) loop left_xp := left_xp - (200 + 75 * (lvl - 1)); lvl := lvl + 1; end loop;
+    if s1 is not null and e.t >= (s1->>'start')::bigint and e.t < (s1->>'end')::bigint then season1 := season1 + got; end if;
+    if s2 is not null and e.t >= (s2->>'start')::bigint and e.t < (s2->>'end')::bigint then season2 := season2 + got; end if;
+  end loop;
+end $$;
+
+-- XP from achievements, first achievements in a game and 100%s dated inside a season (before multipliers)
 create or replace function tl_season_unlock_xp(p_player text, s jsonb) returns bigint language sql stable as $$
   select
     coalesce((select sum(xp) from steam_unlocks
@@ -805,6 +853,7 @@ declare
   t text;
   v_xp bigint; v_unlocked bigint; v_ach bigint; v_games int; v_perfect int; v_over75 int; v_hours int;
   base_cur int; base_prev int; sxp bigint;
+  w record;
   lvl int;
 begin
   select * into pl from players where id = p_id;
@@ -873,7 +922,9 @@ begin
          (coalesce(sum(minutes), 0) / 60)::int
   into v_games, v_perfect, v_over75, v_hours
   from steam_games where player = me;
-  v_xp := v_ach + 50 * v_games + 500 * v_perfect + 10 * v_hours;
+  -- with rank multipliers: every dated gain counts with the multiplier of the rank you had back then
+  select * into w from tl_walk_xp(me, v_ach + 50 * v_games + 500 * v_perfect + 10 * v_hours, cur, prev);
+  v_xp := w.total;
   lvl := tl_level(v_xp);
 
   -- cheat checks (only unlocks after the last approval count)
@@ -902,14 +953,14 @@ begin
   values (cur->>'id', me, case when pl.verified_at > 0 then pl.hours else v_hours end)
   on conflict do nothing;
   select hours into base_cur from season_hours where season = cur->>'id' and player = me;
-  sxp := tl_season_unlock_xp(me, cur) + 10 * greatest(v_hours - base_cur, 0);
+  sxp := w.season1 + 10 * greatest(v_hours - base_cur, 0);
   insert into season_scores (season, player, xp, updated) values (cur->>'id', me, sxp, v_now)
   on conflict (season, player) do update set xp = excluded.xp, updated = excluded.updated;
   -- the season that just ended can still change during the first week of the new one
   if (prev->>'number')::int >= 1 and v_now - (cur->>'start')::bigint < 7 * 86400 then
     select hours into base_prev from season_hours where season = prev->>'id' and player = me;
     insert into season_scores (season, player, xp, updated)
-    values (prev->>'id', me, tl_season_unlock_xp(me, prev) + 10 * greatest(base_cur - coalesce(base_prev, base_cur), 0), v_now)
+    values (prev->>'id', me, w.season2 + 10 * greatest(base_cur - coalesce(base_prev, base_cur), 0), v_now)
     on conflict (season, player) do update set xp = excluded.xp, updated = excluded.updated;
   end if;
 

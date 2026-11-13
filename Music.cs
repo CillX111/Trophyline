@@ -226,6 +226,70 @@ static partial class Spotify
         Win.SetForegroundWindow(h);
     }
 
+    /// Shows Spotify with its queue open (Windows). Spotify doesn't share the queue with other programs, so
+    /// Trophyline presses Spotify's own "Queue" button through Windows accessibility. Returns an error text or null.
+    public static async Task<string?> OpenQueueAsync()
+    {
+        if (!Platform.Windows) return "Opening the queue works on Windows only.";
+        try
+        {
+            if (!Status().Running)
+            {
+                StartMinimizedWindows();
+                await WaitUntilRunning(TimeSpan.FromSeconds(10));
+                await Task.Delay(2500); // let it finish loading
+            }
+            ShowWindow();
+            await Task.Delay(400);
+            var h = Win.FindMainWindow(SpotifyPids()).Handle;
+            if (h == IntPtr.Zero) return "Spotify's window didn't open.";
+            int code = await Task.Run(() => RunQueueScript(h));
+            return code == 0 ? null : "Spotify is open, but its Queue button wasn't found. Click the queue icon in Spotify's bottom bar.";
+        }
+        catch (Exception ex)
+        {
+            Program.LogError("spotify queue: " + ex.Message);
+            return "Couldn't open Spotify's queue.";
+        }
+    }
+
+    /// Spotify's "Queue" toggle in several languages (the button's accessible name follows Spotify's language).
+    static readonly string[] QueueNames = ["Queue", "Warteschlange", "File d'attente", "Cola", "Coda", "Fila", "Wachtrij", "Kolejka", "Kö", "Kø", "Jono"];
+
+    static int RunQueueScript(IntPtr hwnd)
+    {
+        var names = string.Join(",", QueueNames.Select(n => "'" + n.Replace("'", "''") + "'"));
+        var script = $$"""
+            Add-Type -AssemblyName UIAutomationClient,UIAutomationTypes
+            $root = [Windows.Automation.AutomationElement]::FromHandle([IntPtr]{{hwnd.ToInt64()}})
+            $names = @({{names}})
+            $cond = New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::ControlTypeProperty, [Windows.Automation.ControlType]::Button)
+            for ($i = 0; $i -lt 25; $i++) {
+              foreach ($b in $root.FindAll([Windows.Automation.TreeScope]::Descendants, $cond)) {
+                if ($names -contains $b.Current.Name) {
+                  try { $t = $b.GetCurrentPattern([Windows.Automation.TogglePattern]::Pattern) } catch { continue }
+                  if ($t.Current.ToggleState -ne [Windows.Automation.ToggleState]::On) { $t.Toggle() }
+                  exit 0
+                }
+              }
+              Start-Sleep -Milliseconds 250
+            }
+            exit 2
+            """;
+        var psi = new ProcessStartInfo("powershell.exe")
+        {
+            UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true,
+        };
+        foreach (var a in new[] { "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand",
+                                  Convert.ToBase64String(System.Text.Encoding.Unicode.GetBytes(script)) })
+            psi.ArgumentList.Add(a);
+        using var p = Process.Start(psi);
+        if (p == null) return 1;
+        p.StandardOutput.ReadToEnd();
+        if (!p.WaitForExit(20000)) { try { p.Kill(); } catch { } return 1; }
+        return p.ExitCode;
+    }
+
     /// Watches for Spotify's window popping up and hides it (or minimizes it), without taking focus.
     static async Task TuckAway(bool hide, TimeSpan watch)
     {

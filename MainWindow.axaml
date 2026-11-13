@@ -521,6 +521,10 @@
                                     <Button Classes="icon" Click="Next_Click" ToolTip.Tip="Next" Width="40" Height="40">
                                         <PathIcon Data="{StaticResource IconNext}" Width="18" Height="18"/>
                                     </Button>
+                                    <Button x:Name="QueueButton" Classes="pill" Click="ShowQueue_Click" VerticalAlignment="Center" Margin="8,0,0,0"
+                                            ToolTip.Tip="Opens Spotify with its queue: what plays next">
+                                        <TextBlock x:Name="QueueButtonText" Text="Queue"/>
+                                    </Button>
                                 </StackPanel>
                             </StackPanel>
                         </Grid>

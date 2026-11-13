@@ -112,6 +112,7 @@ public partial class MainWindow : Window
         musicTimer.Tick += async (_, _) => await RefreshMusic();
         PlaylistLink.KeyDown += async (_, e) => { if (e.Key == Key.Enter) { e.Handled = true; await AddPlaylistFromBox(); } };
         SpotifyWindowRow.IsVisible = Platform.Windows;
+        QueueButton.IsVisible = Platform.Windows;
         HideSpotifySwitch.IsChecked = Program.Settings().HideSpotify;
         HideSpotifySwitch.IsCheckedChanged += async (_, _) =>
         {
@@ -157,6 +158,11 @@ public partial class MainWindow : Window
         Activated += async (_, _) =>
         {
             if (data != null) { BuildProfile(); UpdateAvatar(); } // name or icon may have changed elsewhere
+            if (queueOpened)
+            {
+                queueOpened = false;
+                if (Program.Settings().HideSpotify) { await Task.Run(Spotify.HideWindow); _ = RefreshMusic(); }
+            }
             if (!loading && lastLoad != default && DateTime.Now - lastLoad > TimeSpan.FromMinutes(2))
                 await LoadAsync(online: false);
         };
@@ -677,6 +683,23 @@ public partial class MainWindow : Window
         if (Spotify.WindowState() == Spotify.SpotifyWindow.Showing) Spotify.HideWindow();
         else Spotify.ShowWindow();
         await Task.Delay(300);
+        await RefreshMusic();
+    }
+
+    bool queueOpened; // Spotify was brought up for its queue: tuck it away again when you come back here
+
+    async void ShowQueue_Click(object? sender, RoutedEventArgs e)
+    {
+        QueueButton.IsEnabled = false;
+        QueueButtonText.Text = "Opening…";
+        var err = await Spotify.OpenQueueAsync();
+        QueueButton.IsEnabled = true;
+        QueueButtonText.Text = "Queue";
+        if (err != null) { AddHint.Text = err; return; }
+        queueOpened = true;
+        AddHint.Text = Program.Settings().HideSpotify
+            ? "Spotify's queue is open. Spotify hides again when you come back to Trophyline."
+            : "Spotify's queue is open.";
         await RefreshMusic();
     }
 
@@ -2418,6 +2441,10 @@ public partial class MainWindow : Window
             case "level": NavLevel.IsChecked = true; break;
             case "welcome": WelcomeOverlay.IsVisible = true; break;
             case "updateprompt": ShowUpdatePrompt(new Version(arg ?? "9.9.9")); break; // dev check
+            case "queue": // dev check: opens Spotify's queue and writes the result to queue-test.txt
+                _ = Task.Run(async () => File.WriteAllText(System.IO.Path.Combine(Program.Home, "queue-test.txt"),
+                    await Spotify.OpenQueueAsync() ?? "ok"));
+                break;
             case "account": // dev check: "register,user,pass" / "login,user,pass" / "logout" / (nothing)
                 NavSettings.IsChecked = true;
                 _ = SnapshotAccount(arg);

@@ -224,6 +224,9 @@ async function verify(body: any): Promise<any> {
   if (!key) return { error: "The Trophyline server doesn't have a Steam API key yet. Ask the server owner to add it." };
   const sid: string = start.steam_id;
   const k = encodeURIComponent(key);
+  // the Steam name is the Trophyline name (without a login code someone may still have in it)
+  const who = await personaName(sid).catch(() => ({} as { name?: string }));
+  const steamName = (who.name ?? "").replace(/\s*\bTL[0-9A-F]{5}\b\s*/gi, " ").trim();
 
   const owned = await steam(`/IPlayerService/GetOwnedGames/v1/?key=${k}&steamid=${sid}&include_appinfo=1&include_played_free_games=1&format=json`);
   if (owned.status === 401 || owned.status === 403) {
@@ -292,6 +295,7 @@ async function verify(body: any): Promise<any> {
       owned: list.map((g) => ({ a: g.appid, m: g.playtime_forever ?? 0, n: typeof g.name === "string" ? g.name.slice(0, 120) : "" })),
       games,
       partial: todo.length > batch.length || notReached > 0,
+      name: steamName,
     },
   });
   if (result?.ok && Array.isArray(result.latest)) {

@@ -65,7 +65,7 @@ static class Online
         return new JsonObject { ["p_id"] = cfg.OnlineId, ["p_secret"] = cfg.OnlineSecret };
     }
 
-    // ---------- accounts: your Steam account is your Trophyline account ----------
+    // ---------- accounts: you log in with your Steam account (no separate account) ----------
 
     /// Logged in on this computer.
     public static bool LoggedIn => Program.Settings().OnlineId.Length > 0;
@@ -150,7 +150,7 @@ static class Online
         if (err == null) return false;
         var e = err.ToLowerInvariant();
         if (!(e.StartsWith("create an account first") || e.StartsWith("not your profile") || e.StartsWith("log in again")
-              || e.StartsWith("log in to your trophyline account again") || e.StartsWith("this account was banned"))) return false;
+              || e.StartsWith("log in to your trophyline account again") || e.StartsWith("log in with steam again") || e.StartsWith("this account was banned"))) return false;
         Program.LogError("online: the server ended this login (" + err + ")");
         ForgetSession();
         return true;
@@ -353,7 +353,7 @@ static class Online
     /// Has the server check your scores with Steam now. A big library is checked in parts, one call each.
     public static async Task<(JsonNode? Result, string? Error)> Verify(Action<string>? progress = null)
     {
-        if (!LoggedIn || NeedsLogin) return (null, "Log in to your Trophyline account first.");
+        if (!LoggedIn || NeedsLogin) return (null, "Log in with Steam first (Settings).");
         if (!await verifying.WaitAsync(0)) return (null, "A check is already running.");
         try
         {
@@ -406,12 +406,17 @@ static class Online
         {
             var cfg = Program.Settings();
             var sid = linked.GetValue<bool>() ? r["steam_id"]?.GetValue<string>() ?? "" : "";
+            // your name is your Steam name, as the server last read it from Steam
+            var name = r["name"] is JsonNode n && n.GetValueKind() == System.Text.Json.JsonValueKind.String ? n.GetValue<string>() : "";
+            bool changed = false;
             if (cfg.VerifiedSteam != sid)
             {
                 cfg.VerifiedSteam = sid; // e.g. linked on another computer
                 if (sid.Length > 0) cfg.OnlineSteamAccount = sid;
-                Program.SaveSettings(cfg);
+                changed = true;
             }
+            if (sid.Length > 0 && name.Length > 0 && cfg.OnlineName != name) { cfg.OnlineName = name; changed = true; }
+            if (changed) Program.SaveSettings(cfg);
         }
         return r;
     }

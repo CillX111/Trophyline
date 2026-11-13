@@ -169,7 +169,7 @@ if (process.env.KEEP !== "1") {
   const L1 = "76561198000000005";
   account(L1).name = "Oldie on Steam";
   r = await fn({ action: "login", id: "legacyprofile0000000001", secret: "legacy-secret-legacy-secret-1", openid: openid(L1) });
-  check("an old profile becomes the Steam account's profile", r.ok && r.id === "legacyprofile0000000001" && r.name === "Oldie", r);
+  check("an old profile becomes the Steam account's profile", r.ok && r.id === "legacyprofile0000000001" && r.name === "Oldie on Steam", r); // and takes the Steam name
 
   // name code, for networks that block Steam's login page
   const N = "76561198000000006";
@@ -234,9 +234,20 @@ if (process.env.KEEP !== "1") {
   // client upload after verification can't change the numbers
   await rpc("tl_upsert", { p: { id: me.id, secret: me.secret, name: "Alice", xp: 9999999, level: 300, perfect: 999, over75: 999 } }).catch(() => {});
   await new Promise((res) => setTimeout(res, 11000)); // tl_upsert allows one upload per 10 s
-  const up = await rpc("tl_upsert", { p: { id: me.id, secret: me.secret, name: "Alice", xp: 9999999, level: 300, perfect: 999, over75: 999, seasons: [{ id: "2026-4", xp: 999999 }] } });
+  const up = await rpc("tl_upsert", { p: { id: me.id, secret: me.secret, name: "Fake Name", xp: 9999999, level: 300, perfect: 999, over75: 999, seasons: [{ id: "2026-4", xp: 999999 }] } });
   pl = (await query(`select name, xp, perfect from players where id = '${me.id}'`))[0];
-  check("uploads from the app can't change verified numbers", up.ok && pl.xp === 2290 && pl.perfect === 2 && pl.name === "Alice", { up, pl });
+  check("uploads from the app can't change verified numbers", up.ok && pl.xp === 2290 && pl.perfect === 2, { up, pl });
+  check("the name stays the Steam name (the app can't set another)", pl.name === "Alice", pl);
+  account(A).name = "Alice Renamed"; // renamed in Steam
+  await sql(`update players set v_next = 0 where id = '${me.id}'`);
+  r = await fn({ action: "verify", ...me });
+  pl = (await query(`select name, xp from players where id = '${me.id}'`))[0];
+  check("a new Steam name is picked up at the next check", r.ok && pl.name === "Alice Renamed" && pl.xp === 2290, { r, pl });
+  const vs = await rpc("tl_verify_status", { p_id: me.id, p_secret: me.secret });
+  check("the app reads the name from the server", vs.name === "Alice Renamed", vs);
+  account(A).name = "Alice";
+  await sql(`update players set v_next = 0 where id = '${me.id}'`);
+  await fn({ action: "verify", ...me });
   lb = await rpc("tl_leaderboard", { p_board: "season", p_me: me.id });
   check("season board uses Steam's season XP", lb.rows.length === 1 && lb.rows[0].value === 1780, lb.rows);
   const prof = await rpc("tl_player", { p_id: me.id });

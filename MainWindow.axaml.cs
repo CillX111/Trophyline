@@ -265,7 +265,7 @@ public partial class MainWindow : Window
 
     // =============== sidebar ===============
 
-    /// Your Trophyline name when you're logged in (what others see), otherwise your Steam name.
+    /// The name others see: your Steam name as the server last read it, or the one in Steam's files on this PC.
     string DisplayName()
     {
         var cfg = Program.Settings();
@@ -821,7 +821,6 @@ public partial class MainWindow : Window
                 DeleteAccountText.Text = "Delete account";
             }
             ShowAccountState();
-            OnlineNameBox.Text = cfg.OnlineName.Length > 0 ? cfg.OnlineName : data?.PersonaName ?? "";
             BuildLinkBoxes();
             ShowMyPicture();
             OnlineStatus.Text = !Online.Available ? "The Trophyline server isn't set up yet, so this can't be turned on."
@@ -1096,11 +1095,11 @@ public partial class MainWindow : Window
         LoggedOutPanel.IsVisible = !loggedIn || legacy;
         LoggedInPanel.IsVisible = loggedIn && !legacy;
         AccountIntro.Text = legacy
-            ? "Trophyline accounts are Steam accounts now. Log in with Steam once to keep your profile, your places and your picture."
+            ? "Trophyline now uses your Steam account. Log in with Steam once to keep your profile, your places and your picture."
             : "Log in with your Steam account";
         var cfg = Program.Settings();
         var who = SteamAccounts.List().FirstOrDefault(a => a.Id64 == cfg.VerifiedSteam);
-        LoggedInAs.Text = $"Logged in with Steam as {cfg.OnlineName}" + (who != null && who.Display != cfg.OnlineName ? $"  (Steam account {who.Display})" : "");
+        LoggedInAs.Text = $"Logged in with Steam as {(cfg.OnlineName.Length > 0 ? cfg.OnlineName : who?.Display ?? "you")}";
         if (loggedIn && !legacy) _ = ShowVerifyState();
         // an old profile, or one that logged in with Steam on another computer: ask the server
         else if (legacy && !checkedLegacy)
@@ -1126,8 +1125,9 @@ public partial class MainWindow : Window
         codeChallenge = null;
         AccountNote("You're logged in with Steam. Reading your achievements from Steam…", good: true);
         seasonIds.Clear();
+        await FollowLoggedInAccount();
         BuildSettings();
-        BuildProfile(); // the sidebar card now shows your Trophyline name
+        BuildProfile(); // the sidebar card now shows your name as others see it
         UpdateAvatar();
         await UploadNow(); // this also starts the first check with Steam
         if (Program.Settings().LastVerify == 0) await RunVerify();
@@ -1218,6 +1218,11 @@ public partial class MainWindow : Window
             VerifyText.Text = "Couldn't reach the server to see your Steam check right now.";
             return;
         }
+        // the server may have picked up a new Steam name
+        BuildProfile();
+        UpdateAvatar();
+        var me = Program.Settings();
+        LoggedInAs.Text = $"Logged in with Steam as {(me.OnlineName.Length > 0 ? me.OnlineName : "you")}";
         bool ranked = st["ranked"]?.GetValue<bool>() == true;
         bool flagged = st["flagged"]?.GetValue<bool>() == true;
         bool partial = st["partial"]?.GetValue<bool>() == true;
@@ -1277,18 +1282,6 @@ public partial class MainWindow : Window
         BuildSettings();
     }
 
-    async void SaveOnlineName_Click(object? sender, RoutedEventArgs e)
-    {
-        var name = (OnlineNameBox.Text ?? "").Trim();
-        if (name.Length == 0) return;
-        var cfg = Program.Settings();
-        cfg.OnlineName = name;
-        Program.SaveSettings(cfg);
-        BuildProfile(); // the sidebar card shows the new name right away
-        UpdateAvatar();
-        if (Online.Enabled) await UploadNow();
-        else OnlineStatus.Text = "Name saved. It shows once you're logged in.";
-    }
 
     async void LbRefresh_Click(object? sender, RoutedEventArgs e)
     {
@@ -1972,7 +1965,6 @@ public partial class MainWindow : Window
     // =============== Steam account (Settings) ===============
 
     List<string> accountChoices = [];     // "" = automatic, otherwise a 17-digit Steam ID
-    CancellationTokenSource? signIn;
 
     void FillAccountPick(Config cfg)
     {
@@ -2014,29 +2006,20 @@ public partial class MainWindow : Window
         BuildSettings();
     }
 
-    async void SteamSignIn_Click(object? sender, RoutedEventArgs e)
+    /// After logging in with Steam: show that account's achievements (if its files are on this PC),
+    /// so there is just one Steam login for everything.
+    async Task FollowLoggedInAccount()
     {
-        if (signIn != null) { signIn.Cancel(); return; } // second click cancels
-        signIn = new CancellationTokenSource();
-        SteamSignInText.Text = "Cancel";
-        AccountStatus.Text = "Waiting for you to sign in on Steam's page in your browser…";
-        var r = await SteamAccounts.SignIn(signIn.Token);
-        signIn.Dispose();
-        signIn = null;
-        SteamSignInText.Text = "Sign in with Steam…";
-        Activate();
-        if (r.Id64 == null) { AccountStatus.Text = r.Error ?? "Sign-in failed."; return; }
-
         var cfg = Program.Settings();
-        cfg.SteamAccount = r.Id64;
+        var steam = cfg.VerifiedSteam;
+        if (steam.Length == 0 || cfg.SteamAccount == steam) return;
+        if (!SteamAccounts.List().Any(a => a.Id64 == steam && a.HasFiles)) return; // another PC's account: keep what's shown
+        bool auto = cfg.SteamAccount.Length == 0 && SteamAccounts.Current()?.Id64 == steam;
+        if (auto) return; // "automatic" already shows it
+        cfg.SteamAccount = steam;
         cfg.SteamSignedIn = true;
         Program.SaveSettings(cfg);
-        var known = SteamAccounts.List().FirstOrDefault(a => a.Id64 == r.Id64);
-        var name = known?.Display ?? await SteamAccounts.PublicName(r.Id64) ?? r.Id64;
-        AccountStatus.Text = $"Signed in as {name}.";
         await LoadAsync(online: true);
-        BuildSettings();
-        if (known == null) AccountStatus.Text = $"Signed in as {name}. " + AccountStatus.Text;
     }
 
     // =============== first-start notice ===============

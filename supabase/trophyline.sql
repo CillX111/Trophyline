@@ -289,7 +289,6 @@ declare
 begin
   if v_id is null or v_id !~ '^[a-z0-9]{16,40}$' then raise exception 'bad id'; end if;
   if v_secret is null or length(v_secret) < 24 or length(v_secret) > 128 then raise exception 'bad secret'; end if;
-  if v_name = '' then raise exception 'name required'; end if;
 
   -- only an existing account can upload (create one with tl_register)
   select updated, banned into v_old_updated, v_banned from players where id = v_id;
@@ -298,7 +297,7 @@ begin
   if tl_auth(v_id, v_secret) is null then raise exception 'not your profile'; end if;
   if v_now - v_old_updated < 10 then raise exception 'too often'; end if;
 
-  -- Only what the player chooses: display name, equipped icon and profile links. Levels, XP, game counts,
+  -- Only what the player chooses: equipped icon and profile links (the name is the Steam name). Levels, XP, game counts,
   -- best games and latest unlocks are never taken from the app; the Steam check sets them (tl_srv_apply).
   select level into v_level from players where id = v_id;
   if v_icon <> '' and not tl_icon_ok(v_icon, v_level) then v_icon := ''; end if;
@@ -307,7 +306,8 @@ begin
       if k ~ '^[a-z]{2,20}$' and length(v) between 1 and 64 then v_links := v_links || jsonb_build_object(k, tl_clean(v, 64)); end if;
     end loop;
   end if;
-  update players set name = v_name, updated = v_now,
+  -- the name comes from Steam (login and every Steam check); only old unlinked profiles still send one
+  update players set name = case when steam_id is null and v_name <> '' then v_name else name end, updated = v_now,
                      profile = (profile - 'icon' - 'links') || jsonb_build_object('icon', v_icon, 'links', v_links)
   where id = v_id;
   update sessions set used = v_now where token_hash = tl_hash(v_secret);
@@ -709,7 +709,7 @@ declare
   pl players;
   v_now bigint := tl_now();
 begin
-  if me is null then return jsonb_build_object('error', 'Log in to your Trophyline account again'); end if;
+  if me is null then return jsonb_build_object('error', 'Log in with Steam again'); end if;
   select * into pl from players where id = me;
   if pl.steam_id is null then return jsonb_build_object('error', 'Link your Steam account first'); end if;
   -- also between the parts of a big check (v_next is then a few seconds away), so nobody can hammer Steam
@@ -732,7 +732,7 @@ declare
   v_now bigint := tl_now();
   old text;
 begin
-  if me is null then return jsonb_build_object('error', 'Log in to your Trophyline account again'); end if;
+  if me is null then return jsonb_build_object('error', 'Log in with Steam again'); end if;
   if coalesce(p_steam_id, '') !~ '^7656119[0-9]{10}$' then return jsonb_build_object('error', 'That is not a Steam account'); end if;
   delete from openid_nonces where used < v_now - 86400;
   insert into openid_nonces (nonce, used) values (left(coalesce(p_nonce, ''), 300), v_now) on conflict do nothing;
@@ -790,6 +790,11 @@ begin
   v_cleared := pl.cleared_at;
   if pl.approve then
     v_cleared := greatest(v_cleared, (select coalesce(max(time), 0) from steam_unlocks where player = me));
+  end if;
+
+  -- your name on Trophyline is your Steam name: picked up at every check, so a rename in Steam carries over
+  if coalesce(tl_clean(p->>'name', 24), '') <> '' then
+    update players set name = tl_clean(p->>'name', 24) where id = me;
   end if;
 
   -- playtime of every game the account owns
@@ -936,7 +941,7 @@ declare
   me text := tl_auth(p_id, p_secret);
   v_code text := 'TL-' || upper(substr(tl_token(), 1, 6));
 begin
-  if me is null then return jsonb_build_object('error', 'Log in to your Trophyline account again'); end if;
+  if me is null then return jsonb_build_object('error', 'Log in with Steam again'); end if;
   if coalesce(p_steam_id, '') !~ '^7656119[0-9]{10}$' then return jsonb_build_object('error', 'Pick a Steam account first'); end if;
   if exists (select 1 from players where steam_id = p_steam_id and id <> me) then
     return jsonb_build_object('error', 'This Steam account is already linked to another Trophyline account');
@@ -953,7 +958,7 @@ declare
   me text := tl_auth(p_id, p_secret);
   c steam_codes;
 begin
-  if me is null then return jsonb_build_object('error', 'Log in to your Trophyline account again'); end if;
+  if me is null then return jsonb_build_object('error', 'Log in with Steam again'); end if;
   delete from steam_codes where created < tl_now() - 1200;
   select * into c from steam_codes where player = me;
   if c.player is null then return jsonb_build_object('error', 'The code ran out. Get a new one.'); end if;
@@ -983,9 +988,9 @@ declare
   me text := tl_auth(p_id, p_secret);
   pl players;
 begin
-  if me is null then return jsonb_build_object('error', 'Log in to your Trophyline account again'); end if;
+  if me is null then return jsonb_build_object('error', 'Log in with Steam again'); end if;
   select * into pl from players where id = me;
-  return jsonb_build_object('linked', pl.steam_id is not null, 'steam_id', pl.steam_id, 'state', pl.v_state,
+  return jsonb_build_object('linked', pl.steam_id is not null, 'steam_id', pl.steam_id, 'name', pl.name, 'state', pl.v_state,
     'verified_at', pl.verified_at, 'ranked', pl.ranked, 'flagged', pl.flags <> '' and not pl.approve,
     'partial', pl.v_partial, 'xp', pl.xp, 'level', pl.level, 'perfect', pl.perfect, 'over75', pl.over75,
     'unlocked', pl.unlocked, 'games', pl.games, 'hours', pl.hours,
@@ -1025,7 +1030,8 @@ begin
   select * into pl from players where steam_id = p_steam_id;
   if pl.id is not null then
     if pl.banned then return jsonb_build_object('error', 'This account was banned'); end if;
-    update players set fail_count = 0 where id = pl.id;
+    -- your name on Trophyline is your Steam name
+    update players set fail_count = 0, name = coalesce(nullif(tl_clean(p_name, 24), ''), name) where id = pl.id;
     return tl_session(pl.id) || jsonb_build_object('steam_id', p_steam_id);
   end if;
 
@@ -1036,7 +1042,8 @@ begin
     delete from season_scores where player = here;
     delete from season_hours where player = here;
     update players set steam_id = p_steam_id, verified_at = 0, v_state = '', v_partial = false, v_next = 0,
-                       flags = '', approve = false, cleared_at = 0
+                       flags = '', approve = false, cleared_at = 0,
+                       name = coalesce(nullif(tl_clean(p_name, 24), ''), name)
     where id = here;
     return tl_session(here) || jsonb_build_object('steam_id', p_steam_id);
   end if;

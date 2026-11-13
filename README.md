@@ -50,7 +50,7 @@ The files aren't signed by Microsoft or Apple, so the first launch shows a warni
   the Level page shows ranks (Rookie → Explorer → Hunter → Veteran → Elite → Master →
   Legend), where your XP comes from and recent gains. Pop-ups show the XP you earned
   and a "Level up!" card when you reach a new level
-- **Leaderboards** (online, with a free Trophyline account, Steam-verified): Season XP, Highest XP, Most completed games and
+- **Leaderboards** (online, log in with Steam, Steam-verified): Season XP, Highest XP, Most completed games and
   Most games over 75%, plus every season's champions. Click anyone to see their
   profile: level, rank, places, best games and latest unlocks
 - **Seasons**: each lasts 3 months (Season 1 = Autumn 2026, October–December);
@@ -77,7 +77,7 @@ The files aren't signed by Microsoft or Apple, so the first launch shows a warni
 
 ## How it works
 
-- **Your Trophyline account is your Steam account** (Settings → Trophyline account → Log
+- **You log in with your Steam account** (Settings → Steam account → Log
   in with Steam). No extra password: Steam's own login page opens in your browser and
   Trophyline never sees your Steam password. On networks that block that page (some school
   and work networks), use a **name code**: put the short code Trophyline shows (like

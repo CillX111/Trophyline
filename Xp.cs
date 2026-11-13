@@ -56,6 +56,11 @@ static class Xp
         (30, "Elite", "#FF8A4C"),
         (45, "Master", "#FF6FAE"),
         (60, "Legend", "#F5C451"),
+        (75, "Mythic", "#3DD6C6"),
+        (90, "Immortal", "#FF5C6C"),
+        (110, "Titan", "#7B8CFF"),
+        (130, "Celestial", "#C9D6E3"),
+        (150, "Eternal", "#FFE08A"),
     ];
 
     public static (string Title, string Color) RankFor(int level) =>

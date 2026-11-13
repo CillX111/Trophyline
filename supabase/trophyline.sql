@@ -712,7 +712,8 @@ begin
 end $$;
 
 create or replace function tl_rank(p_level int) returns text language sql immutable as $$
-  select case when p_level >= 60 then 'Legend' when p_level >= 45 then 'Master' when p_level >= 30 then 'Elite'
+  select case when p_level >= 150 then 'Eternal' when p_level >= 130 then 'Celestial' when p_level >= 110 then 'Titan'
+              when p_level >= 90 then 'Immortal' when p_level >= 75 then 'Mythic' when p_level >= 60 then 'Legend' when p_level >= 45 then 'Master' when p_level >= 30 then 'Elite'
               when p_level >= 20 then 'Veteran' when p_level >= 10 then 'Hunter' when p_level >= 5 then 'Explorer'
               else 'Rookie' end
 $$;

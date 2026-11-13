@@ -180,11 +180,15 @@ static class Program
 
     static int SelfUpdate()
     {
+        // Once the new program has replaced this file, parts of .NET that aren't loaded yet can't be loaded
+        // any more (they live inside the file). So load what's needed afterwards first.
+        bool trackerWasRunning = TrackerRunning();
+        _ = typeof(Console).Assembly;
         var r = Updater.CheckAndInstall().GetAwaiter().GetResult();
         if (r == null) return Fail("Couldn't reach GitHub to check for updates.");
         if (!r.Newer) return Say($"Trophyline {Updater.Current.ToString(3)} is the newest version.");
         if (!r.Installed) return Fail($"Trophyline {r.Latest.ToString(3)} is out. {r.Note ?? ""}\n{Updater.ReleasesPage}");
-        if (TrackerRunning()) RestartTracker();
+        if (trackerWasRunning) RestartTracker();
         return Say($"Updated Trophyline {Updater.Current.ToString(3)} -> {r.Latest.ToString(3)}.");
     }
 

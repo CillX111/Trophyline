@@ -52,7 +52,7 @@ static class Updater
     }
 
     /// The installed program's path, also when this process runs from a renamed old copy (Trophyline.exe.old…).
-    static string? InstalledExe()
+    internal static string? InstalledExe()
     {
         if (Environment.ProcessPath is not string exe) return null;
         int cut = exe.IndexOf(".old", StringComparison.OrdinalIgnoreCase);

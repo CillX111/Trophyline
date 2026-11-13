@@ -967,7 +967,7 @@
                         <StackPanel Spacing="10">
                             <Grid ColumnDefinitions="*,Auto">
                                 <ToggleSwitch x:Name="AutoUpdateSwitch" OnContent="" OffContent="" Padding="0" MinWidth="0"
-                                              Content="Update Trophyline automatically"/>
+                                              Content="Ask about new versions when I open Trophyline"/>
                                 <Button Grid.Column="1" Classes="pill" Click="CheckUpdates_Click" VerticalAlignment="Center">
                                     <TextBlock Text="Check now"/>
                                 </Button>
@@ -1011,15 +1011,39 @@
                     <StackPanel Spacing="12">
                         <StackPanel Orientation="Horizontal" Spacing="12">
                             <PathIcon Data="{StaticResource IconDownload}" Width="28" Height="28" Foreground="{StaticResource Gold}"/>
-                            <TextBlock Text="Trophyline updates itself" FontSize="24" FontWeight="Bold" VerticalAlignment="Center"/>
+                            <TextBlock Text="New versions, when you want them" FontSize="24" FontWeight="Bold" VerticalAlignment="Center"/>
                         </StackPanel>
                         <TextBlock TextWrapping="Wrap"
-                                   Text="When a new version comes out, Trophyline downloads it from its GitHub page in the background and installs it by itself. You don't have to do anything."/>
+                                   Text="When you open Trophyline and a new version is out, it asks whether you want to update. Say yes and it downloads the new version from its GitHub page, installs it and restarts by itself."/>
                         <TextBlock Classes="muted" TextWrapping="Wrap" FontSize="13"
-                                   Text="&#8226; It checks when you open the window and about twice a day in the background.&#10;&#8226; Every download is checked against the release's fingerprint before it's installed.&#10;&#8226; The new version starts the next time you open Trophyline (or right away with &quot;Restart now&quot;).&#10;&#8226; On macOS it only tells you that a new version is out."/>
+                                   Text="&#8226; Nothing is installed without asking you.&#10;&#8226; Every download is checked against the release's fingerprint before it's installed.&#10;&#8226; Say &quot;Later&quot; and it asks again the next time you open Trophyline.&#10;&#8226; On macOS it opens the download page instead."/>
                         <CheckBox x:Name="WelcomeAutoUpdate" IsChecked="True" Margin="0,4,0,0"
-                                  Content="Keep automatic updates on (you can change this any time in Settings)"/>
+                                  Content="Ask me about new versions (you can change this any time in Settings)"/>
                         <Button Classes="primary" Click="AcceptWelcome_Click" HorizontalAlignment="Right" Margin="0,6,0,0" Content="Got it"/>
+                    </StackPanel>
+                </Border>
+            </Border>
+
+            <!-- "A new version is out: update now?" asked when the window opens -->
+            <Border x:Name="UpdatePrompt" IsVisible="False" Background="#E60B1016">
+                <Border Classes="card" MaxWidth="520" Padding="30,26" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="24"
+                        BorderBrush="{DynamicResource Accent}" BoxShadow="0 12 40 0 #A0000000">
+                    <StackPanel Spacing="12">
+                        <StackPanel Orientation="Horizontal" Spacing="12">
+                            <PathIcon Data="{StaticResource IconDownload}" Width="28" Height="28" Foreground="{DynamicResource Accent}"/>
+                            <TextBlock x:Name="UpdatePromptTitle" Text="A new version is out" FontSize="24" FontWeight="Bold" VerticalAlignment="Center"/>
+                        </StackPanel>
+                        <TextBlock x:Name="UpdatePromptText" TextWrapping="Wrap"/>
+                        <TextBlock x:Name="UpdatePromptMsg" Classes="muted" FontSize="13" TextWrapping="Wrap"
+                                   Text="It takes a few seconds. Trophyline restarts by itself; your achievements and settings stay."/>
+                        <StackPanel Orientation="Horizontal" Spacing="10" HorizontalAlignment="Right" Margin="0,6,0,0">
+                            <Button x:Name="UpdateLaterButton" Classes="pill" Click="UpdateLater_Click" VerticalAlignment="Center">
+                                <TextBlock Text="Later"/>
+                            </Button>
+                            <Button x:Name="UpdateNowButton" Classes="primary" Click="UpdateNow_Click" MinHeight="0" Padding="0">
+                                <TextBlock x:Name="UpdateNowText" Text="Update now" Margin="0,9"/>
+                            </Button>
+                        </StackPanel>
                     </StackPanel>
                 </Border>
             </Border>

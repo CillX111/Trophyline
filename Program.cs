@@ -94,16 +94,29 @@ static class Program
                 using (existing) existing.Set();
                 return 0;
             }
-            var show = new EventWaitHandle(false, EventResetMode.AutoReset, showName);
+            var show = windowLock = new EventWaitHandle(false, EventResetMode.AutoReset, showName);
             new Thread(() =>
             {
-                while (show.WaitOne()) Avalonia.Threading.Dispatcher.UIThread.Post(App.BringToFront);
+                try { while (show.WaitOne()) Avalonia.Threading.Dispatcher.UIThread.Post(App.BringToFront); }
+                catch (ObjectDisposedException) { } // released for a restart
             }) { IsBackground = true, Name = "show window" }.Start();
             EnsureTrackerRunning();
         }
         App.Args = args;
         AppDomain.CurrentDomain.UnhandledException += (_, e) => LogError("unhandled: " + e.ExceptionObject);
         return BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
+    }
+
+    static EventWaitHandle? windowLock;
+
+    /// Opens the installed (possibly just updated) Trophyline in a new window. Call right before closing this one:
+    /// it first lets go of the "one window only" lock, or the new window would just bring this one forward.
+    internal static void RestartWindow()
+    {
+        try { windowLock?.Dispose(); } catch { }
+        windowLock = null;
+        if (Updater.InstalledExe() is string exe)
+            Process.Start(new ProcessStartInfo(exe) { UseShellExecute = false });
     }
 
     // Also used by the Avalonia designer.
@@ -136,7 +149,7 @@ static class Program
         watcher.Start(); // also catches up on anything unlocked while it wasn't running
         using var games = new GameMonitor(steamFolder);
         games.Start();   // plays a game's soundtrack when you launch it
-        using var updates = Updater.StartBackgroundChecks(); // twice a day
+        // No silent updates in the background: the window asks you when you open it (see MainWindow).
         Platform.TrimMemory();
 
         Thread.Sleep(Timeout.Infinite); // sleeps here with no CPU use; --stop ends the process

@@ -150,8 +150,8 @@ public partial class MainWindow : Window
             _ = RefreshMusic();
             await LoadAsync(online: true);
             ready.TrySetResult();
-            // automatic updates only after the user has seen the notice about them
-            if (Updater.Allowed && App.Args.Length == 0 && Program.Settings().WelcomeAccepted) await RunUpdate(manual: false);
+            // a new version? ask right away (only after the user has seen the notice about updates)
+            if (Updater.Allowed && App.Args.Length == 0 && Program.Settings().WelcomeAccepted) await AskToUpdate();
         };
         Activated += async (_, _) =>
         {
@@ -2085,9 +2085,68 @@ public partial class MainWindow : Window
 
     void RestartForUpdate_Click(object? sender, RoutedEventArgs e)
     {
-        if (Environment.ProcessPath is string exe)
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(exe) { UseShellExecute = false });
+        Program.RestartWindow();
         Close();
+    }
+
+    // ----- asked when the window opens: "a new version is out, update now?" -----
+
+    Version? offeredVersion;
+
+    /// Looks for a new version (without installing) and, if there is one, asks whether to update.
+    async Task AskToUpdate()
+    {
+        var r = await Task.Run(() => Updater.CheckAndInstall(install: false));
+        if (r is not { Newer: true }) return;
+        ShowUpdatePrompt(r.Latest);
+    }
+
+    void ShowUpdatePrompt(Version latest)
+    {
+        offeredVersion = latest;
+        UpdatePromptTitle.Text = "A new version is out";
+        UpdatePromptText.Text = $"Trophyline {latest.ToString(3)} is out (you have {Updater.Current.ToString(3)}). Do you want to update now?";
+        UpdatePromptMsg.Text = Platform.Mac
+            ? "On macOS, Update now opens the download page."
+            : "It takes a few seconds. Trophyline restarts by itself; your achievements and settings stay.";
+        UpdatePromptMsg.Foreground = Res("Muted");
+        UpdateNowText.Text = Platform.Mac ? "Open download page" : "Update now";
+        UpdateNowButton.IsEnabled = UpdateLaterButton.IsEnabled = true;
+        UpdatePrompt.IsVisible = true;
+    }
+
+    void UpdateLater_Click(object? sender, RoutedEventArgs e) => UpdatePrompt.IsVisible = false; // asks again next time
+
+    async void UpdateNow_Click(object? sender, RoutedEventArgs e)
+    {
+        if (Platform.Mac)
+        {
+            Platform.OpenUrl(Updater.ReleasesPage);
+            UpdatePrompt.IsVisible = false;
+            return;
+        }
+        UpdateNowButton.IsEnabled = UpdateLaterButton.IsEnabled = false;
+        UpdateNowText.Text = "Updating…";
+        UpdatePromptMsg.Text = "Downloading the new version…";
+        var r = await Task.Run(() => Updater.CheckAndInstall(install: true));
+        if (r is { Installed: true })
+        {
+            UpdatePromptMsg.Text = "Installed. Restarting…";
+            Program.RestartTracker(); // the background tracker switches to the new version too
+            await Task.Delay(500);
+            Program.RestartWindow();
+            Close();
+            return;
+        }
+        if (r is { Newer: false })
+        {
+            UpdatePrompt.IsVisible = false; // already up to date (e.g. updated from another window meanwhile)
+            return;
+        }
+        UpdatePromptMsg.Text = (r?.Note ?? "Couldn't reach GitHub to download the update.") + " You can try again, or later from Settings → Updates.";
+        UpdatePromptMsg.Foreground = Fmt.Orange;
+        UpdateNowText.Text = "Try again";
+        UpdateNowButton.IsEnabled = UpdateLaterButton.IsEnabled = true;
     }
 
     void HideUpdateBanner_Click(object? sender, RoutedEventArgs e) => UpdateBanner.IsVisible = false;
@@ -2374,6 +2433,7 @@ public partial class MainWindow : Window
             case "playtime": NavPlaytime.IsChecked = true; break;
             case "level": NavLevel.IsChecked = true; break;
             case "welcome": WelcomeOverlay.IsVisible = true; break;
+            case "updateprompt": ShowUpdatePrompt(new Version(arg ?? "9.9.9")); break; // dev check
             case "account": // dev check: "register,user,pass" / "login,user,pass" / "logout" / (nothing)
                 NavSettings.IsChecked = true;
                 _ = SnapshotAccount(arg);

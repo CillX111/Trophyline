@@ -226,68 +226,135 @@ static partial class Spotify
         Win.SetForegroundWindow(h);
     }
 
-    /// Shows Spotify with its queue open (Windows). Spotify doesn't share the queue with other programs, so
-    /// Trophyline presses Spotify's own "Queue" button through Windows accessibility. Returns an error text or null.
-    public static async Task<string?> OpenQueueAsync()
+    // ---------- the queue (Windows) ----------
+    // Spotify's desktop app doesn't share its queue with other programs (and the Web API needs Premium).
+    // So Trophyline reads it from Spotify's own window through Windows accessibility. Spotify only builds
+    // that while its window is "shown", so the window is shown far off-screen without focus and without a
+    // taskbar button for about a second, then put back exactly as it was. You never see Spotify open.
+
+    static readonly SemaphoreSlim queueGate = new(1, 1);
+
+    /// What's playing and what plays next, read from Spotify without showing it. Error text when it couldn't.
+    public static async Task<(SpotifyQueue? Queue, string? Error)> ReadQueueAsync()
     {
-        if (!Platform.Windows) return "Opening the queue works on Windows only.";
+        if (!Platform.Windows) return (null, "The queue can only be shown on Windows.");
+        if (!await queueGate.WaitAsync(0)) return (null, null); // a read is already running
         try
         {
-            if (!Status().Running)
-            {
-                StartMinimizedWindows();
-                await WaitUntilRunning(TimeSpan.FromSeconds(10));
-                await Task.Delay(2500); // let it finish loading
-            }
-            ShowWindow();
-            await Task.Delay(400);
             var h = Win.FindMainWindow(SpotifyPids()).Handle;
-            if (h == IntPtr.Zero) return "Spotify's window didn't open.";
-            int code = await Task.Run(() => RunQueueScript(h));
-            return code == 0 ? null : "Spotify is open, but its Queue button wasn't found. Click the queue icon in Spotify's bottom bar.";
+            if (h == IntPtr.Zero) return (null, "Spotify isn't open.");
+            bool visible = Win.IsWindowVisible(h), minimized = Win.IsIconic(h);
+            bool onScreen = visible && !minimized; // shown normally: read it where it is
+            var place = Win.Placement(h);
+            int exStyle = Win.GetWindowLong(h, Win.GWL_EXSTYLE);
+            try
+            {
+                if (!onScreen)
+                {
+                    // no taskbar button, then "show" it far off-screen without taking focus
+                    Win.SetWindowLong(h, Win.GWL_EXSTYLE, (exStyle | Win.WS_EX_TOOLWINDOW) & ~Win.WS_EX_APPWINDOW);
+                    var off = place;
+                    int w = place.Normal.Right - place.Normal.Left, ht = place.Normal.Bottom - place.Normal.Top;
+                    off.Normal = new Win.RECT { Left = -32000, Top = -32000, Right = -32000 + Math.Max(w, 900), Bottom = -32000 + Math.Max(ht, 700) };
+                    off.ShowCmd = Win.SW_SHOWNOACTIVATE;
+                    off.Flags = 0;
+                    Win.SetPlacement(h, off);
+                }
+                var json = await Task.Run(() => RunQueueScript(h, closeAfter: true)); // leave Spotify's panels as they were
+                return json == null ? (null, "Couldn't read Spotify's queue right now.") : (SpotifyQueue.Parse(json), null);
+            }
+            finally
+            {
+                if (!onScreen)
+                {
+                    // back exactly as it was: hidden stays hidden, minimized stays minimized, same normal size and place
+                    var back = place;
+                    back.ShowCmd = visible ? Win.SW_SHOWMINNOACTIVE : Win.SW_HIDE;
+                    Win.SetPlacement(h, back);
+                    Win.SetWindowLong(h, Win.GWL_EXSTYLE, exStyle);
+                }
+            }
         }
         catch (Exception ex)
         {
             Program.LogError("spotify queue: " + ex.Message);
-            return "Couldn't open Spotify's queue.";
+            return (null, "Couldn't read Spotify's queue right now.");
         }
+        finally { queueGate.Release(); }
     }
 
     /// Spotify's "Queue" toggle in several languages (the button's accessible name follows Spotify's language).
     static readonly string[] QueueNames = ["Queue", "Warteschlange", "File d'attente", "Cola", "Coda", "Fila", "Wachtrij", "Kolejka", "Kö", "Kø", "Jono"];
 
-    static int RunQueueScript(IntPtr hwnd)
+    /// Opens Spotify's queue panel (closing it again afterwards if it was closed) and prints it as JSON:
+    /// [{ "h": heading, "t": [[title, artists], ...] }, ...]. Null when it didn't work.
+    static string? RunQueueScript(IntPtr hwnd, bool closeAfter)
     {
         var names = string.Join(",", QueueNames.Select(n => "'" + n.Replace("'", "''") + "'"));
         var script = $$"""
             Add-Type -AssemblyName UIAutomationClient,UIAutomationTypes
-            $root = [Windows.Automation.AutomationElement]::FromHandle([IntPtr]{{hwnd.ToInt64()}})
+            $A = [Windows.Automation.AutomationElement]; $T = [Windows.Automation.ControlType]; $S = [Windows.Automation.TreeScope]
+            $root = $A::FromHandle([IntPtr]{{hwnd.ToInt64()}})
             $names = @({{names}})
-            $cond = New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::ControlTypeProperty, [Windows.Automation.ControlType]::Button)
-            for ($i = 0; $i -lt 25; $i++) {
-              foreach ($b in $root.FindAll([Windows.Automation.TreeScope]::Descendants, $cond)) {
-                if ($names -contains $b.Current.Name) {
-                  try { $t = $b.GetCurrentPattern([Windows.Automation.TogglePattern]::Pattern) } catch { continue }
-                  if ($t.Current.ToggleState -ne [Windows.Automation.ToggleState]::On) { $t.Toggle() }
-                  exit 0
-                }
+            $bc = New-Object Windows.Automation.PropertyCondition($A::ControlTypeProperty, $T::Button)
+            $btn = $null
+            for ($i = 0; $i -lt 30 -and -not $btn; $i++) {
+              foreach ($b in $root.FindAll($S::Descendants, $bc)) {
+                if ($names -contains $b.Current.Name) { try { $null = $b.GetCurrentPattern([Windows.Automation.TogglePattern]::Pattern); $btn = $b; break } catch {} }
               }
-              Start-Sleep -Milliseconds 250
+              if (-not $btn) { Start-Sleep -Milliseconds 150 }
             }
-            exit 2
+            if (-not $btn) { exit 2 }
+            $tog = $btn.GetCurrentPattern([Windows.Automation.TogglePattern]::Pattern)
+            $was = $tog.Current.ToggleState
+            if ($was -ne [Windows.Automation.ToggleState]::On) { $tog.Toggle() }
+            $pc = New-Object Windows.Automation.AndCondition((New-Object Windows.Automation.PropertyCondition($A::ControlTypeProperty, $T::Pane)), (New-Object Windows.Automation.PropertyCondition($A::NameProperty, $btn.Current.Name)))
+            $gc = New-Object Windows.Automation.PropertyCondition($A::ControlTypeProperty, $T::DataGrid)
+            $ic = New-Object Windows.Automation.PropertyCondition($A::ControlTypeProperty, $T::TreeItem)
+            $lc = New-Object Windows.Automation.PropertyCondition($A::ControlTypeProperty, $T::Hyperlink)
+            $out = @()
+            for ($i = 0; $i -lt 20; $i++) {
+              $pane = $root.FindFirst($S::Descendants, $pc)
+              if ($pane) {
+                $w = [Windows.Automation.TreeWalker]::RawViewWalker
+                $heading = ''
+                $c = $w.GetFirstChild($pane)
+                while ($c) {
+                  if ($c.Current.ControlType -eq $T::Text) { $heading = $c.Current.Name }
+                  elseif ($c.Current.ControlType -eq $T::DataGrid) {
+                    $tracks = @()
+                    foreach ($it in $c.FindAll($S::Children, $ic)) {
+                      $artists = @($it.FindAll($S::Descendants, $lc) | ForEach-Object { $_.Current.Name } | Where-Object { $_ })
+                      $tracks += ,@($it.Current.Name, ($artists -join ', '))
+                      if ($tracks.Count -ge 50) { break }
+                    }
+                    $out += [pscustomobject]@{ h = $heading; t = $tracks }
+                  }
+                  $c = $w.GetNextSibling($c)
+                }
+                if ($out.Count -gt 0) { break }
+              }
+              Start-Sleep -Milliseconds 150
+            }
+            if ({{(closeAfter ? "$true" : "$false")}} -and $was -ne [Windows.Automation.ToggleState]::On) { $tog.Toggle() }
+            if ($out.Count -eq 0) { exit 3 }
+            [Console]::OutputEncoding = [Text.Encoding]::UTF8
+            ConvertTo-Json -InputObject @($out) -Depth 5 -Compress
+            exit 0
             """;
         var psi = new ProcessStartInfo("powershell.exe")
         {
             UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true,
+            StandardOutputEncoding = System.Text.Encoding.UTF8,
         };
         foreach (var a in new[] { "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand",
                                   Convert.ToBase64String(System.Text.Encoding.Unicode.GetBytes(script)) })
             psi.ArgumentList.Add(a);
         using var p = Process.Start(psi);
-        if (p == null) return 1;
-        p.StandardOutput.ReadToEnd();
-        if (!p.WaitForExit(20000)) { try { p.Kill(); } catch { } return 1; }
-        return p.ExitCode;
+        if (p == null) return null;
+        var stdout = p.StandardOutput.ReadToEndAsync();
+        if (!p.WaitForExit(20000)) { try { p.Kill(); } catch { } return null; }
+        return p.ExitCode == 0 ? stdout.Result.Trim() : null;
     }
 
     /// Watches for Spotify's window popping up and hides it (or minimizes it), without taking focus.
@@ -309,7 +376,36 @@ static partial class Spotify
     /// Plain Win32 calls; EnumWindows also finds hidden windows (Process.MainWindowHandle doesn't).
     static class Win
     {
-        public const int SW_HIDE = 0, SW_SHOW = 5, SW_SHOWMINNOACTIVE = 7, SW_RESTORE = 9;
+        public const int SW_HIDE = 0, SW_SHOW = 5, SW_SHOWMINNOACTIVE = 7, SW_RESTORE = 9, SW_SHOWNOACTIVATE = 4;
+        public const int GWL_EXSTYLE = -20, WS_EX_TOOLWINDOW = 0x80, WS_EX_APPWINDOW = 0x40000;
+
+        [StructLayout(LayoutKind.Sequential)] public struct POINT { public int X, Y; }
+        [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
+        [StructLayout(LayoutKind.Sequential)]
+        public struct WINDOWPLACEMENT
+        {
+            public int Length, Flags, ShowCmd;
+            public POINT MinPosition, MaxPosition;
+            public RECT Normal;
+        }
+
+        public static WINDOWPLACEMENT Placement(IntPtr h)
+        {
+            var p = new WINDOWPLACEMENT { Length = Marshal.SizeOf<WINDOWPLACEMENT>() };
+            GetWindowPlacement(h, ref p);
+            return p;
+        }
+
+        public static void SetPlacement(IntPtr h, WINDOWPLACEMENT p)
+        {
+            p.Length = Marshal.SizeOf<WINDOWPLACEMENT>();
+            SetWindowPlacement(h, ref p);
+        }
+
+        [DllImport("user32.dll")] static extern bool GetWindowPlacement(IntPtr h, ref WINDOWPLACEMENT p);
+        [DllImport("user32.dll")] static extern bool SetWindowPlacement(IntPtr h, ref WINDOWPLACEMENT p);
+        [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr h, int index);
+        [DllImport("user32.dll")] public static extern int SetWindowLong(IntPtr h, int index, int value);
 
         delegate bool EnumProc(IntPtr hWnd, IntPtr lParam);
 
@@ -391,6 +487,37 @@ static partial class Spotify
 
     [LibraryImport("user32.dll")]
     private static partial void keybd_event(byte vk, byte scan, uint flags, nuint extra);
+}
+
+public sealed record QueueTrack(string Title, string Artists);
+public sealed record QueueSection(string Heading, List<QueueTrack> Tracks);
+
+/// Spotify's queue as its queue panel shows it: "Now playing", then e.g. "Next in queue" and "Next from: …".
+public sealed class SpotifyQueue
+{
+    public List<QueueSection> Sections { get; } = [];
+
+    public static SpotifyQueue Parse(string json)
+    {
+        var q = new SpotifyQueue();
+        using var doc = JsonDocument.Parse(json);
+        var root = doc.RootElement;
+        var list = root.ValueKind == JsonValueKind.Array ? root.EnumerateArray().ToList() : [root];
+        foreach (var s in list)
+        {
+            var heading = s.TryGetProperty("h", out var h) && h.ValueKind == JsonValueKind.String ? h.GetString() ?? "" : "";
+            var tracks = new List<QueueTrack>();
+            if (s.TryGetProperty("t", out var t) && t.ValueKind == JsonValueKind.Array)
+                foreach (var tr in t.EnumerateArray())
+                {
+                    if (tr.ValueKind != JsonValueKind.Array) continue;
+                    var parts = tr.EnumerateArray().Select(x => x.ValueKind == JsonValueKind.String ? x.GetString() ?? "" : "").ToList();
+                    if (parts.Count > 0 && parts[0].Length > 0) tracks.Add(new QueueTrack(parts[0], parts.Count > 1 ? parts[1] : ""));
+                }
+            if (tracks.Count > 0) q.Sections.Add(new QueueSection(heading, tracks));
+        }
+        return q;
+    }
 }
 
 public sealed class SavedPlaylist

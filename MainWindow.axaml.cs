@@ -66,7 +66,7 @@ public partial class MainWindow : Window
         NavAchievements.IsCheckedChanged += (_, _) => { if (NavAchievements.IsChecked == true && !syncingNav) ShowPage(AchievementsPage); };
         NavGames.IsCheckedChanged += (_, _) => { if (NavGames.IsChecked == true && !syncingNav) ShowPage(GamesPage); };
         NavStorage.IsCheckedChanged += (_, _) => { if (NavStorage.IsChecked == true && !syncingNav) ShowPage(StoragePage); };
-        NavMusic.IsCheckedChanged += (_, _) => { if (NavMusic.IsChecked == true && !syncingNav) ShowPage(MusicPage); };
+        NavMusic.IsCheckedChanged += async (_, _) => { if (NavMusic.IsChecked == true && !syncingNav) { ShowPage(MusicPage); await RefreshQueue(); } };
         NavLeaderboard.IsCheckedChanged += async (_, _) => { if (NavLeaderboard.IsChecked == true && !syncingNav) { ShowPage(LeaderboardPage); await LoadLeaderboard(); } };
         NavShop.IsCheckedChanged += (_, _) => { if (NavShop.IsChecked == true && !syncingNav) { BuildShop(); ShowPage(ShopPage); } };
         NavChat.IsCheckedChanged += async (_, _) => { if (NavChat.IsChecked == true && !syncingNav) { ShowPage(ChatPage); await RefreshChat(full: true); } };
@@ -112,7 +112,7 @@ public partial class MainWindow : Window
         musicTimer.Tick += async (_, _) => await RefreshMusic();
         PlaylistLink.KeyDown += async (_, e) => { if (e.Key == Key.Enter) { e.Handled = true; await AddPlaylistFromBox(); } };
         SpotifyWindowRow.IsVisible = Platform.Windows;
-        QueueButton.IsVisible = Platform.Windows;
+        QueueCard.IsVisible = Platform.Windows;
         HideSpotifySwitch.IsChecked = Program.Settings().HideSpotify;
         HideSpotifySwitch.IsCheckedChanged += async (_, _) =>
         {
@@ -158,11 +158,6 @@ public partial class MainWindow : Window
         Activated += async (_, _) =>
         {
             if (data != null) { BuildProfile(); UpdateAvatar(); } // name or icon may have changed elsewhere
-            if (queueOpened)
-            {
-                queueOpened = false;
-                if (Program.Settings().HideSpotify) { await Task.Run(Spotify.HideWindow); _ = RefreshMusic(); }
-            }
             if (!loading && lastLoad != default && DateTime.Now - lastLoad > TimeSpan.FromMinutes(2))
                 await LoadAsync(online: false);
         };
@@ -651,6 +646,8 @@ public partial class MainWindow : Window
             return;
         }
         if (s.Playing && s.Title.Length > 0) { lastTitle = s.Title; lastArtist = s.Artist; }
+        // a new song started while you look at the Music page: what's next has moved on
+        if (s.Playing && s.Title.Length > 0 && queueForTitle != null && s.Title != queueForTitle && MusicPage.IsVisible) _ = RefreshQueue();
         MiniTitle.Text = lastTitle ?? (s.Playing ? "Playing" : "Paused");
         MiniArtist.Text = s.Playing ? lastArtist ?? "" : "paused";
         BigState.Text = s.Playing ? "NOW PLAYING" : "PAUSED";
@@ -686,21 +683,74 @@ public partial class MainWindow : Window
         await RefreshMusic();
     }
 
-    bool queueOpened; // Spotify was brought up for its queue: tuck it away again when you come back here
+    // ----- Spotify's queue, read without showing Spotify -----
 
-    async void ShowQueue_Click(object? sender, RoutedEventArgs e)
+    DateTime queueReadAt;
+    string? queueForTitle;   // the song that was playing when the queue was last read
+    bool queueBusy;
+
+    async void QueueRefresh_Click(object? sender, RoutedEventArgs e) => await RefreshQueue(force: true);
+
+    /// Reads Spotify's queue (about a second, in the background) and lists it. Runs when the Music page
+    /// opens, when the song changes while it's open, and on Refresh.
+    async Task RefreshQueue(bool force = false)
     {
-        QueueButton.IsEnabled = false;
-        QueueButtonText.Text = "Opening…";
-        var err = await Spotify.OpenQueueAsync();
-        QueueButton.IsEnabled = true;
-        QueueButtonText.Text = "Queue";
-        if (err != null) { AddHint.Text = err; return; }
-        queueOpened = true;
-        AddHint.Text = Program.Settings().HideSpotify
-            ? "Spotify's queue is open. Spotify hides again when you come back to Trophyline."
-            : "Spotify's queue is open.";
-        await RefreshMusic();
+        if (!Platform.Windows || queueBusy || !MusicPage.IsVisible) return;
+        if (!force && DateTime.Now - queueReadAt < TimeSpan.FromSeconds(4)) return;
+        queueBusy = true;
+        QueueRefreshButton.IsEnabled = false;
+        QueueRefreshText.Text = "Reading…";
+        try
+        {
+            var running = await Task.Run(() => Spotify.Status().Running);
+            if (!running)
+            {
+                QueueList.Children.Clear();
+                QueueSub.Text = "Spotify isn't open. Start a playlist and its queue shows up here.";
+                return;
+            }
+            var (q, err) = await Spotify.ReadQueueAsync();
+            queueReadAt = DateTime.Now;
+            queueForTitle = lastTitle;
+            if (q == null) { if (err != null) QueueSub.Text = err; return; }
+            ShowQueue(q);
+        }
+        finally
+        {
+            queueBusy = false;
+            QueueRefreshButton.IsEnabled = true;
+            QueueRefreshText.Text = "Refresh";
+        }
+    }
+
+    void ShowQueue(SpotifyQueue q)
+    {
+        QueueList.Children.Clear();
+        // the first section is "Now playing"; the rest is what comes next
+        var next = q.Sections.Skip(1).ToList();
+        QueueSub.Text = next.Count == 0 ? "Nothing queued after this song." : next[0].Heading;
+        int shown = 0;
+        foreach (var (s, si) in next.Select((s, i) => (s, i)))
+        {
+            if (si > 0 && s.Heading.Length > 0)
+                QueueList.Children.Add(new TextBlock { Text = s.Heading, Classes = { "muted" }, FontSize = 12, Margin = new Thickness(0, 8, 0, 2) });
+            foreach (var t in s.Tracks)
+            {
+                if (shown >= 20) break;
+                shown++;
+                var row = new Grid { ColumnDefinitions = new ColumnDefinitions("28,*"), Margin = new Thickness(0, 3) };
+                row.Children.Add(new TextBlock { Text = shown.ToString(), Foreground = Res("Muted"), FontSize = 12, VerticalAlignment = VerticalAlignment.Center });
+                var text = new StackPanel { [Grid.ColumnProperty] = 1 };
+                text.Children.Add(new TextBlock { Text = t.Title, FontWeight = FontWeight.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis });
+                if (t.Artists.Length > 0)
+                    text.Children.Add(new TextBlock { Text = t.Artists, Foreground = Res("Muted"), FontSize = 12, TextTrimming = TextTrimming.CharacterEllipsis });
+                row.Children.Add(text);
+                QueueList.Children.Add(row);
+            }
+        }
+        int total = next.Sum(s => s.Tracks.Count);
+        if (total > shown)
+            QueueList.Children.Add(new TextBlock { Text = $"+{total - shown} more", Foreground = Res("Muted"), FontSize = 12, Margin = new Thickness(28, 4, 0, 0) });
     }
 
     void FillPlaylists()
@@ -2441,10 +2491,6 @@ public partial class MainWindow : Window
             case "level": NavLevel.IsChecked = true; break;
             case "welcome": WelcomeOverlay.IsVisible = true; break;
             case "updateprompt": ShowUpdatePrompt(new Version(arg ?? "9.9.9")); break; // dev check
-            case "queue": // dev check: opens Spotify's queue and writes the result to queue-test.txt
-                _ = Task.Run(async () => File.WriteAllText(System.IO.Path.Combine(Program.Home, "queue-test.txt"),
-                    await Spotify.OpenQueueAsync() ?? "ok"));
-                break;
             case "account": // dev check: "register,user,pass" / "login,user,pass" / "logout" / (nothing)
                 NavSettings.IsChecked = true;
                 _ = SnapshotAccount(arg);

@@ -102,7 +102,8 @@ static partial class Spotify
     }
 
     /// Starts Spotify if needed and plays the playlist / album / artist.
-    public static async Task PlayAsync(SavedPlaylist p)
+    /// Returns false when Spotify (Windows) still isn't playing after a few tries.
+    public static async Task<bool> PlayAsync(SavedPlaylist p)
     {
         try
         {
@@ -142,11 +143,33 @@ static partial class Spotify
                 Process.Start(new ProcessStartInfo(uri) { UseShellExecute = true });
                 if (tuck) await TuckAway(hide, TimeSpan.FromSeconds(4));
                 else await Task.Delay(800);
-                Send(Command.Play);
+                // A freshly started or busy Spotify sometimes ignores the first press: check and try again.
+                for (int i = 0; i < 3; i++)
+                {
+                    Send(Command.Play);
+                    if (await WaitUntilPlaying(TimeSpan.FromSeconds(2.5))) break;
+                }
                 if (tuck) await TuckAway(hide, TimeSpan.FromSeconds(1));
+                if (!Status().Playing)
+                {
+                    Program.LogError("spotify play: Spotify didn't start playing " + uri);
+                    return false;
+                }
             }
         }
         catch (Exception ex) { Program.LogError("spotify play: " + ex.Message); }
+        return true;
+    }
+
+    static async Task<bool> WaitUntilPlaying(TimeSpan max)
+    {
+        var until = DateTime.Now + max;
+        while (DateTime.Now < until)
+        {
+            if (Status().Playing) return true;
+            await Task.Delay(250);
+        }
+        return false;
     }
 
     /// Starts Spotify as a background process: no window (or minimized, if hiding is turned off).

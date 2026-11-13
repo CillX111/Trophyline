@@ -694,9 +694,15 @@ public partial class MainWindow : Window
     {
         if ((sender as Control)?.DataContext is not PlaylistVM vm) return;
         AddHint.Text = $"Starting \"{vm.Title}\" in Spotify…";
-        await Spotify.PlayAsync(vm.P);
+        bool playing = await Spotify.PlayAsync(vm.P);
         Activate(); // keep Trophyline in front; Spotify stays minimized
         await RefreshMusic();
+        if (!playing)
+        {
+            AddHint.Text = $"Spotify opened \"{vm.Title}\" but won't start playing. Press Show Spotify and play it there. "
+                + "If Spotify ignores play too, quit Spotify fully (also in the taskbar corner) and try again.";
+            return;
+        }
         AddHint.Text = Platform.Windows
             ? $"Playing \"{vm.Title}\" (Spotify stays minimized). If it kept playing something else, press play once."
             : $"Playing \"{vm.Title}\".";

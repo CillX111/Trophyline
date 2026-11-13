@@ -131,6 +131,18 @@ async function login(body: any): Promise<any> {
   });
 }
 
+const codeStarts = new Map<string, number[]>(); // caller IP -> times (ms) of recent code requests
+
+/** At most 10 code requests per IP in 15 minutes (per running copy of the function). */
+export function allowCodeStart(ip: string, now = Date.now()): boolean {
+  const recent = (codeStarts.get(ip) ?? []).filter((t) => now - t < 15 * 60 * 1000);
+  if (recent.length >= 10) { codeStarts.set(ip, recent); return false; }
+  recent.push(now);
+  codeStarts.set(ip, recent);
+  if (codeStarts.size > 10000) codeStarts.clear(); // keep memory bounded
+  return true;
+}
+
 /** For networks that block Steam's login page: a code to put in your Steam profile name. */
 async function codeStart(body: any): Promise<any> {
   const sid = String(body?.steam_id ?? "");
@@ -240,15 +252,21 @@ async function verify(body: any): Promise<any> {
     });
   const batch = todo.slice(0, PER_CALL);
 
+  // Supabase stops a function after 150 s: start no new Steam reads after 90 s and save what's done
+  // (the rest counts as "left" for the next part).
+  const deadline = Date.now() + 90_000;
+  let notReached = 0;
   let isPrivate = false;
   const games = (await pool(batch, PARALLEL, async (g) => {
     if (isPrivate) return null;
+    if (Date.now() > deadline) { notReached++; return null; }
     const pa = await steam(`/ISteamUserStats/GetPlayerAchievements/v1/?key=${k}&steamid=${sid}&appid=${g.appid}&format=json`);
     const ps = pa.body?.playerstats;
     if (pa.status === 403 || /not public/i.test(ps?.error ?? "")) { isPrivate = true; return null; }
     if (!ps?.success || !Array.isArray(ps.achievements)) {
       // "Requested app has no stats" and similar: no achievements to count
-      return pa.status === 400 || ps?.success === false ? { a: g.appid, total: 0, u: [] } : null;
+      // anything else (Steam busy, an odd reply): try this game again later, without blocking the others
+      return pa.status === 400 || ps?.success === false ? { a: g.appid, total: 0, u: [] } : { a: g.appid, skip: true };
     }
     const got = ps.achievements.filter((x: any) => x.achieved === 1 || x.achieved === true);
     let rarity: Record<string, number> = {};
@@ -273,12 +291,15 @@ async function verify(body: any): Promise<any> {
     p: {
       owned: list.map((g) => ({ a: g.appid, m: g.playtime_forever ?? 0, n: typeof g.name === "string" ? g.name.slice(0, 120) : "" })),
       games,
-      partial: todo.length > batch.length,
+      partial: todo.length > batch.length || notReached > 0,
     },
   });
-  if (result?.ok && Array.isArray(result.latest)) await latestUnlocks(start.id, result.latest, k);
+  if (result?.ok && Array.isArray(result.latest)) {
+    // the scores are saved already: a problem here must not report the whole check as failed
+    try { await latestUnlocks(start.id, result.latest, k); } catch (e) { console.error("latest unlocks", e); }
+  }
   delete result?.latest;
-  return { ...result, left: Math.max(0, todo.length - batch.length) };
+  return { ...result, left: Math.max(0, todo.length - batch.length + notReached) };
 }
 
 /** Names, icons and rarity for the newest unlocks on the profile (Steam's own names, never the app's). */
@@ -333,7 +354,12 @@ export async function handle(req: Request): Promise<Response> {
   try { body = await req.json(); } catch { return json({ error: "Bad request" }, 400); }
   try {
     if (body?.action === "login") return json(await login(body));
-    if (body?.action === "code_start") return json(await codeStart(body));
+    if (body?.action === "code_start") {
+      // so nobody can use up a player's (or everyone's) login codes from one machine
+      const ip = (req.headers.get("x-forwarded-for") ?? "").split(",")[0].trim() || "unknown";
+      if (!allowCodeStart(ip)) return json({ error: "Too many codes from this network. Wait 15 minutes and try again." });
+      return json(await codeStart(body));
+    }
     if (body?.action === "code_finish") return json(await codeFinish(body));
     if (body?.action === "link") return json(await link(body));
     if (body?.action === "verify") return json(await verify(body));

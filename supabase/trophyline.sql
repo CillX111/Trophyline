@@ -474,14 +474,15 @@ begin
   if p_board = 'season' then
     s := coalesce(tl_season_parse(p_season), tl_season());
     select coalesce(jsonb_agg(to_jsonb(r) order by r.pos), '[]'::jsonb) into v_rows from (
-      select row_number() over (order by ss.xp desc, pl.xp desc) as pos, pl.id, pl.name, pl.level, pl.rank,
+      -- rank(): players with the same score share a place, the same way "your place" is counted below
+      select rank() over (order by ss.xp desc) as pos, pl.id, pl.name, pl.level, pl.rank,
              coalesce(pl.profile->>'icon', '') as icon, pl.avatar_ver as avatar, ss.xp as value
       from season_scores ss join players pl on pl.id = ss.player
       where ss.season = s->>'id' and ss.xp > 0 and pl.ranked
       order by ss.xp desc, pl.xp desc limit lim) r;
     select ss.xp into mv from season_scores ss join players pl on pl.id = ss.player
     where ss.season = s->>'id' and ss.player = p_me and pl.ranked;
-    if mv is not null then
+    if mv > 0 then -- with 0 you aren't in the list, so you have no place either
       v_me := jsonb_build_object('pos', (select count(*) + 1 from season_scores ss join players pl on pl.id = ss.player
                                          where ss.season = s->>'id' and ss.xp > mv and pl.ranked), 'value', mv);
     end if;
@@ -489,13 +490,13 @@ begin
     s := tl_season();
     execute format(
       'select coalesce(jsonb_agg(to_jsonb(r) order by r.pos), ''[]''::jsonb) from (
-         select row_number() over (order by %1$I desc, xp desc) as pos, id, name, level, rank,
+         select rank() over (order by %1$I desc) as pos, id, name, level, rank,
                 coalesce(profile->>''icon'', '''') as icon, avatar_ver as avatar, %1$I::bigint as value
          from players where %1$I > 0 and ranked order by %1$I desc, xp desc limit $1) r', p_board)
       into v_rows using lim;
     if p_me is not null then
       execute format('select %I::bigint from players where id = $1 and ranked', p_board) into mv using p_me;
-      if mv is not null then
+      if mv > 0 then
         execute format('select count(*) + 1 from players where ranked and %I > $1', p_board) into v_pos using mv;
         v_me := jsonb_build_object('pos', v_pos, 'value', mv);
       end if;
@@ -711,7 +712,8 @@ begin
   if me is null then return jsonb_build_object('error', 'Log in to your Trophyline account again'); end if;
   select * into pl from players where id = me;
   if pl.steam_id is null then return jsonb_build_object('error', 'Link your Steam account first'); end if;
-  if not pl.v_partial and v_now < pl.v_next then
+  -- also between the parts of a big check (v_next is then a few seconds away), so nobody can hammer Steam
+  if v_now < pl.v_next then
     return jsonb_build_object('error', 'Checked a moment ago. Try again in ' || ceil((pl.v_next - v_now) / 60.0) || ' min',
                               'wait', pl.v_next - v_now);
   end if;
@@ -802,6 +804,13 @@ begin
   for g in select value from jsonb_array_elements(coalesce(p->'games', '[]'::jsonb)) loop
     continue when coalesce(g->>'a', '') !~ '^[0-9]{1,9}$';
     a := (g->>'a')::int;
+    if coalesce((g->>'skip')::boolean, false) then
+      -- Steam didn't answer for this game: keep what we know and try it again in about a day,
+      -- so it doesn't block the rest of a big library forever
+      update steam_games set seen_minutes = minutes, checked = greatest(checked, v_now - 6 * 86400)
+      where player = me and appid = a;
+      continue;
+    end if;
     delete from steam_unlocks where player = me and appid = a;
     insert into steam_unlocks (player, appid, name, time, xp)
     select me, a, left(e->>0, 200), tl_int(e->>1, 4000000000), least(tl_int(e->>2, 150), 150)::int
@@ -844,8 +853,10 @@ begin
   select coalesce(max(c), 0) into n from (
     select count(distinct appid) as c from steam_unlocks where player = me and time > v_cleared and time > 0 group by time / 60) x;
   if n >= 3 then v_flags := v_flags || 'Achievements in ' || n || ' different games within one minute. '; end if;
+  -- (skipped when Steam shows no playtime at all: "keep my total playtime private" hides every game's hours)
   select string_agg(appid::text, ', ') into t from (
     select sg.appid from steam_games sg where sg.player = me and sg.minutes = 0
+      and exists (select 1 from steam_games h where h.player = me and h.minutes > 0)
       and (select count(*) from steam_unlocks u where u.player = me and u.appid = sg.appid
            and u.time > greatest(v_cleared, 1325376000)) >= 5
     limit 10) x;
@@ -872,7 +883,7 @@ begin
     unlocked = v_unlocked, games = v_games, hours = v_hours,
     verified_at = case when is_partial then verified_at else v_now end,
     v_state = case when is_partial then 'checking' else 'ok' end,
-    v_partial = is_partial, v_next = case when is_partial then 0 else v_now + 600 end,
+    v_partial = is_partial, v_next = case when is_partial then v_now + 3 else v_now + 600 end,
     flags = v_flags, approve = false, cleared_at = v_cleared
   where id = me;
 
@@ -1050,7 +1061,7 @@ begin
   if (select count(*) from login_codes where steam_id = p_steam_id) >= 5 then
     return jsonb_build_object('error', 'Too many codes for this account. Wait 15 minutes and try again.');
   end if;
-  if (select count(*) from login_codes) >= 500 then
+  if (select count(*) from login_codes) >= 5000 then
     return jsonb_build_object('error', 'Too many people are logging in right now. Try again in a few minutes.');
   end if;
   insert into login_codes (id, steam_id, code, created) values (v_id, p_steam_id, v_code, v_now);
@@ -1114,3 +1125,6 @@ grant execute on function tl_srv_begin(text, text), tl_srv_link(text, text, text
   tl_srv_profile(text, jsonb), tl_srv_code(text, text),
   tl_srv_steam_login(text, text, text, text, text), tl_srv_code_start(text), tl_srv_code_get(text), tl_srv_code_done(text)
 to service_role;
+
+-- let the API see new or changed functions right away (otherwise: "Could not find the function ... in the schema cache")
+notify pgrst, 'reload schema';

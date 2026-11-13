@@ -116,7 +116,7 @@ public sealed class PopupWindow : Window
         PointerPressed += (_, _) =>
         {
             try { if (Environment.ProcessPath is string exe) Process.Start(new ProcessStartInfo(exe) { UseShellExecute = false }); } catch { }
-            Close();
+            Hide(); // the timer below still closes it, after the leaderboard upload has finished
         };
 
         // Slide in from the right and fade in; the same in reverse before closing.

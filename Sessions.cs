@@ -8,40 +8,70 @@ public sealed record Session(string AppId, long Start, long End)
 }
 
 /// Play sessions recorded by the tracker: sessions.tsv (appid, start, end as unix seconds)
-/// plus open-session.txt for the game running right now.
+/// plus open-session.txt for the game running right now (appid, start, last seen).
+/// The tracker refreshes "last seen" every minute, so time the PC was off or asleep isn't counted:
+/// a session whose last sign of life is older than a few minutes ends at that last sign of life.
 static class SessionLog
 {
     static string FilePath => Path.Combine(Program.Home, "sessions.tsv");
     static string OpenPath => Path.Combine(Program.Home, "open-session.txt");
 
+    /// A gap longer than this between heartbeats means the PC slept or was off.
+    const long MaxGap = 5 * 60;
+
+    static readonly object gate = new();
+
     static long Now => DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 
-    /// When the computer last started (sessions left open across a shutdown end there).
+    /// When the computer last started (only for sessions saved by older versions without "last seen").
     static long BootTime => Now - Environment.TickCount64 / 1000;
 
     /// Called when the tracker starts: tidies up a session left open and starts one for a game already running.
     public static void Resume(string runningAppId)
     {
-        if (Current() is (string app, long start))
+        lock (gate)
         {
-            if (app == runningAppId && start >= BootTime) return; // tracker restarted mid-game: keep going
-            Close(start < BootTime ? BootTime : Now);
+            if (ReadOpen() is (string app, long start, long seen))
+            {
+                if (app == runningAppId && Now - seen <= MaxGap) { Write(app, start, Now); return; } // tracker restarted mid-game
+                Close(app, start, seen);
+            }
+            if (runningAppId != "0") Write(runningAppId, Now, Now);
         }
-        if (runningAppId != "0") Begin(runningAppId);
     }
 
     public static void Changed(string before, string now)
     {
-        if (before != "0") Close(Now);
-        if (now != "0") Begin(now);
+        lock (gate)
+        {
+            if (ReadOpen() is (string app, long start, long seen)) Close(app, start, Now - seen > MaxGap ? seen : Now);
+            if (now != "0") Write(now, Now, Now);
+        }
     }
 
-    static void Begin(string appId) =>
-        Write(OpenPath, $"{appId}\t{Now}");
-
-    static void Close(long end)
+    /// Called every minute by the tracker while it runs.
+    public static void Heartbeat(string runningAppId)
     {
-        if (Current() is not (string app, long start)) return;
+        lock (gate)
+        {
+            if (ReadOpen() is not (string app, long start, long seen))
+            {
+                if (runningAppId != "0") Write(runningAppId, Now, Now);
+                return;
+            }
+            if (Now - seen > MaxGap || app != runningAppId)
+            {
+                // The PC slept (or the game changed unnoticed): end the old session where it was last seen.
+                Close(app, start, Now - seen > MaxGap ? seen : Now);
+                if (runningAppId != "0") Write(runningAppId, Now, Now);
+                return;
+            }
+            Write(app, start, Now);
+        }
+    }
+
+    static void Close(string app, long start, long end)
+    {
         try
         {
             if (end - start >= 30) // ignore launches that closed straight away
@@ -52,13 +82,19 @@ static class SessionLog
     }
 
     /// The game being played right now (according to the tracker), or null.
-    public static (string AppId, long Start)? Current()
+    public static (string AppId, long Start)? Current() =>
+        ReadOpen() is (string app, long start, _) ? (app, start) : null;
+
+    static (string AppId, long Start, long Seen)? ReadOpen()
     {
         try
         {
             if (!File.Exists(OpenPath)) return null;
             var p = ReadShared(OpenPath).Trim().Split('\t');
-            return p.Length == 2 && long.TryParse(p[1], out var s) ? (p[0], s) : null;
+            if (p.Length < 2 || !long.TryParse(p[1], out var s)) return null;
+            if (p.Length >= 3 && long.TryParse(p[2], out var seen) && seen >= s) return (p[0], s, seen);
+            // written by an older version: assume it ran until the PC was shut down, or until now
+            return (p[0], s, s < BootTime ? BootTime : Now);
         }
         catch (IOException) { return null; }
     }
@@ -87,9 +123,9 @@ static class SessionLog
         return r.ReadToEnd();
     }
 
-    static void Write(string path, string text)
+    static void Write(string app, long start, long seen)
     {
-        try { File.WriteAllText(path, text, Encoding.UTF8); }
+        try { File.WriteAllText(OpenPath, $"{app}\t{start}\t{seen}", Encoding.UTF8); }
         catch (IOException ex) { Program.LogError("sessions: " + ex.Message); }
     }
 }

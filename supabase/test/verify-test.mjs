@@ -302,7 +302,10 @@ if (process.env.KEEP !== "1") {
   pl = (await query(`select ranked from players where id = '${reg2.id}'`))[0];
   check("not ranked until the whole library is checked", pl.ranked === false, pl);
   r = await fn({ action: "verify", id: reg2.id, secret: reg2.secret });
-  check("big library: rest right away", r.ok && r.partial === false && r.unlocked === 130 && r.games === 130, r);
+  check("big library: next part needs a short pause", r.wait > 0 && r.wait <= 3, r);
+  await new Promise((res) => setTimeout(res, 4000)); // the app waits 4 s between parts too
+  r = await fn({ action: "verify", id: reg2.id, secret: reg2.secret });
+  check("big library: rest after the pause", r.ok && r.partial === false && r.unlocked === 130 && r.games === 130, r);
   check("big library XP", r.xp === 130 * 15 + 130 * 50 + 10 * 130, r.xp);
 
   // reports

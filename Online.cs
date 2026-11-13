@@ -91,6 +91,7 @@ static class Online
         cfg.OnlineSteamAccount = steam; // your profile shows this account's games
         cfg.LastVerify = 0;
         if (!sameProfile) cfg.AvatarHash = "";
+        cfg.UploadedProfile = ""; // send name and icon once after every login
         Program.SaveSettings(cfg);
         lastUpload = default;
         return null;
@@ -139,6 +140,24 @@ static class Online
     public static async Task Logout()
     {
         if (Available && LoggedIn) await Rpc("tl_logout", Me());
+        ForgetSession();
+    }
+
+    /// The server no longer knows this computer's login (account deleted on another PC, session expired
+    /// after months unused, banned): forget it here too, so the window asks to log in again.
+    static bool SessionGone(string? err)
+    {
+        if (err == null) return false;
+        var e = err.ToLowerInvariant();
+        if (!(e.StartsWith("create an account first") || e.StartsWith("not your profile") || e.StartsWith("log in again")
+              || e.StartsWith("log in to your trophyline account again") || e.StartsWith("this account was banned"))) return false;
+        Program.LogError("online: the server ended this login (" + err + ")");
+        ForgetSession();
+        return true;
+    }
+
+    static void ForgetSession()
+    {
         var cfg = Program.Settings();
         cfg.OnlineEnabled = false;
         cfg.OnlineId = "";
@@ -209,8 +228,22 @@ static class Online
                 ["links"] = Links(cfg),
             },
         };
-        var (_, err) = await Rpc("tl_upsert", new JsonObject { ["p"] = p });
-        if (err == null) await AutoVerify();
+        // Only send it when something changed here,
+        // so a second PC doesn't keep putting back an old name or icon you changed on the other one.
+        var fingerprint = p["profile"]!.ToJsonString() + "|" + cfg.OnlineName + "|" + cfg.OnlineId;
+        string? err = null;
+        if (force || fingerprint != cfg.UploadedProfile)
+        {
+            (_, err) = await Rpc("tl_upsert", new JsonObject { ["p"] = p });
+            if (SessionGone(err)) return "Log in with Steam again (Settings).";
+            if (err == null)
+            {
+                var c = Program.Settings();
+                c.UploadedProfile = fingerprint;
+                Program.SaveSettings(c);
+            }
+        }
+        await AutoVerify(); // has its own 6-hour gate; runs even if the profile upload failed
         return err == "too often" ? null : err;
     }
 
@@ -283,7 +316,7 @@ static class Online
     // The server asks Steam itself which games and achievements your linked account has. Only those
     // numbers count on the leaderboards, so nothing on this computer can change them.
 
-    static readonly HttpClient SlowHttp = new() { Timeout = TimeSpan.FromSeconds(150) };
+    static readonly HttpClient SlowHttp = new() { Timeout = TimeSpan.FromSeconds(170) }; // a bit above the server's 150 s limit
 
     static string FunctionUrl =>
         Environment.GetEnvironmentVariable("TROPHYLINE_FUNCTION") is { Length: > 0 } env ? env : $"{Server}/functions/v1/trophyline";
@@ -325,14 +358,20 @@ static class Online
         try
         {
             JsonNode? last = null;
+            long lastLeft = long.MaxValue;
             for (int part = 0; part < 40; part++)
             {
                 var cfg = Program.Settings();
                 var (r, err) = await CallFunction(new JsonObject { ["action"] = "verify", ["id"] = cfg.OnlineId, ["secret"] = cfg.OnlineSecret });
+                if (SessionGone(err)) return (null, "Log in with Steam again (Settings).");
                 if (err != null) return (r, err);
                 last = r;
                 if (r?["partial"]?.GetValue<bool>() != true) break;
-                progress?.Invoke($"Checking your games with Steam… {r["left"]} games to go");
+                long left = r["left"] is JsonNode l && l.GetValueKind() == System.Text.Json.JsonValueKind.Number ? l.GetValue<long>() : 0;
+                if (left >= lastLeft) break; // no progress (Steam isn't answering for some games): try again later
+                lastLeft = left;
+                progress?.Invoke($"Checking your games with Steam… {left} games to go");
+                await Task.Delay(4000); // the server wants 3 s between parts
             }
             var c = Program.Settings();
             c.LastVerify = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
@@ -358,8 +397,11 @@ static class Online
     /// Linked account, last check, ranked or paused, and the verified numbers.
     public static async Task<JsonNode?> VerifyStatus()
     {
-        if (!LoggedIn || NeedsLogin) return null;
-        var r = await Read("tl_verify_status", Me());
+        // also for profiles that look unlinked here: they may have logged in with Steam on another computer
+        if (!LoggedIn) return null;
+        var (r, err) = await Rpc("tl_verify_status", Me());
+        if (err != null) Program.LogError("online tl_verify_status: " + err);
+        if (SessionGone(err ?? r?["error"]?.GetValue<string>())) return null;
         if (r?["linked"] is JsonNode linked)
         {
             var cfg = Program.Settings();

@@ -9,7 +9,8 @@ namespace Trophyline;
 /// Loads pictures small and once, so the window stays light. Web pictures are saved to disk the first time.
 static class Img
 {
-    static readonly Dictionary<string, Bitmap?> Cache = new(StringComparer.OrdinalIgnoreCase);
+    // used from background tasks too (profile pictures load off the UI thread), so it must be thread-safe
+    static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Bitmap?> Cache = new(StringComparer.OrdinalIgnoreCase);
     static readonly HttpClient Http = CreateHttp();
 
     static HttpClient CreateHttp()
@@ -46,7 +47,7 @@ static class Img
             var bytes = await Http.GetByteArrayAsync(url);
             Directory.CreateDirectory(Path.GetDirectoryName(localPath)!);
             await System.IO.File.WriteAllBytesAsync(localPath, bytes);
-            Cache.Remove(localPath + "|" + width);
+            Cache.TryRemove(localPath + "|" + width, out _);
             return File(localPath, width);
         }
         catch (Exception) { return null; }

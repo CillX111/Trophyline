@@ -13,12 +13,16 @@ static class IconCache
     public static string LocalPath(Unlock u) =>
         Path.Combine(Folder, $"{Safe(u.AppId)}_{Safe(u.Icon)}");
 
-    /// Downloads any icons that aren't cached yet. Failures are skipped and retried next time.
+    /// Icons that failed to download, and when: not retried for a few hours (many are gone from Steam for good).
+    static readonly System.Collections.Concurrent.ConcurrentDictionary<string, DateTime> failed = new();
+
+    /// Downloads any icons that aren't cached yet. Failures are skipped and retried a few hours later.
     public static void EnsureCached(IEnumerable<Unlock> unlocks)
     {
         var missing = unlocks.Where(u => u.Icon.Length > 0)
                              .DistinctBy(LocalPath)
                              .Where(u => !File.Exists(LocalPath(u)))
+                             .Where(u => !failed.TryGetValue(LocalPath(u), out var at) || DateTime.UtcNow - at > TimeSpan.FromHours(6))
                              .ToList();
         if (missing.Count == 0) return;
 
@@ -39,6 +43,7 @@ static class IconCache
             catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or IOException)
             {
                 // offline or not found: the page falls back to the web link
+                failed[LocalPath(u)] = DateTime.UtcNow;
             }
         }).GetAwaiter().GetResult();
     }

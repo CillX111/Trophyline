@@ -57,6 +57,7 @@ sealed class GameMonitor : IDisposable
     Thread? thread;
     FileSystemWatcher? fsw;
     Timer? debounce;
+    Timer? heartbeat;
 
     public GameMonitor(string? steamFolder) => this.steamFolder = steamFolder;
 
@@ -64,6 +65,12 @@ sealed class GameMonitor : IDisposable
     {
         current = RunningAppId();
         SessionLog.Resume(current);
+        // Tracker restarted mid-game (update, "Restart tracker"): its soundtrack is still ours to pause on quit.
+        if (current != "0" && SoundtrackStore.For(current) != null) playingFor = current;
+        heartbeat = new Timer(_ =>
+        {
+            try { SessionLog.Heartbeat(current); } catch (Exception ex) { Program.LogError("sessions: " + ex.Message); }
+        }, null, 60_000, 60_000);
         if (Platform.Windows)
         {
             thread = new Thread(WaitOnRegistry) { IsBackground = true, Name = "game monitor" };
@@ -79,6 +86,7 @@ sealed class GameMonitor : IDisposable
             FileSystemEventHandler h = (_, _) => debounce.Change(1000, Timeout.Infinite);
             fsw.Changed += h;
             fsw.Created += h;
+            fsw.Renamed += (_, _) => debounce.Change(1000, Timeout.Infinite); // saved as temp file + rename
             fsw.EnableRaisingEvents = true;
         }
     }
@@ -88,12 +96,16 @@ sealed class GameMonitor : IDisposable
         try
         {
             using var key = Registry.CurrentUser.CreateSubKey(@"Software\Valve\Steam");
+            using var changed = new AutoResetEvent(false);
             while (!stopped)
             {
-                // Blocks until a value under the key changes.
-                int err = RegNotifyChangeKeyValue(key.Handle.DangerousGetHandle(), false, REG_NOTIFY_CHANGE_LAST_SET, IntPtr.Zero, false);
+                // Arm the notification first, then look: a change made while Check() was busy
+                // (e.g. starting Spotify) still sets the event, so a quick game quit isn't missed.
+                int err = RegNotifyChangeKeyValue(key.Handle.DangerousGetHandle(), false, REG_NOTIFY_CHANGE_LAST_SET,
+                    changed.SafeWaitHandle.DangerousGetHandle(), true);
                 if (err != 0) { Thread.Sleep(30_000); continue; }
                 Check();
+                changed.WaitOne();
             }
         }
         catch (Exception ex) { Program.LogError("game monitor: " + ex.Message); }
@@ -101,8 +113,8 @@ sealed class GameMonitor : IDisposable
 
     void Check()
     {
-        var now = RunningAppId();
-        if (now == current) return;
+        // An unreadable registry.vdf (Steam mid-write) is not a game quit: keep what we had.
+        if (ReadRunningAppId() is not string now || now == current) return;
         var before = current;
         current = now;
         SessionLog.Changed(before, now);
@@ -140,7 +152,10 @@ sealed class GameMonitor : IDisposable
         finally { Platform.LowPriority(); }
     }
 
-    public string RunningAppId()
+    public string RunningAppId() => ReadRunningAppId() ?? "0";
+
+    /// The running game's app id ("0" = none), or null when Steam's registry.vdf couldn't be read properly.
+    string? ReadRunningAppId()
     {
         try
         {
@@ -149,11 +164,12 @@ sealed class GameMonitor : IDisposable
             if (RegistryVdf() is string vdf && File.Exists(vdf))
             {
                 var steam = Vdf.Path(Vdf.ParseFile(vdf), "Registry", "HKCU", "Software", "Valve", "Steam");
-                return steam != null && steam.TryGetValue("RunningAppID", out var v) && v is string s && s.Length > 0 ? s : "0";
+                if (steam == null || !steam.TryGetValue("RunningAppID", out var v) || v is not string s) return null; // half-written file
+                return s.Length > 0 ? s : "0";
             }
+            return "0";
         }
-        catch (Exception) { }
-        return "0";
+        catch (Exception) { return null; }
     }
 
     string? RegistryVdf()
@@ -178,6 +194,7 @@ sealed class GameMonitor : IDisposable
         stopped = true;
         fsw?.Dispose();
         debounce?.Dispose();
+        heartbeat?.Dispose();
     }
 
     const int REG_NOTIFY_CHANGE_LAST_SET = 4;

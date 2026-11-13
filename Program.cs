@@ -32,6 +32,13 @@ static class Program
     [STAThread]
     static int Main(string[] args)
     {
+        // Trophyline is in English: month and day names must match (a German Windows showed "MÄRZ", "Freitag").
+        // Dates themselves keep the dd.MM.yyyy patterns written in the code.
+        var english = System.Globalization.CultureInfo.GetCultureInfo("en-GB");
+        System.Globalization.CultureInfo.DefaultThreadCurrentCulture = english;
+        System.Globalization.CultureInfo.DefaultThreadCurrentUICulture = english;
+        System.Globalization.CultureInfo.CurrentCulture = english;
+        System.Globalization.CultureInfo.CurrentUICulture = english;
         Directory.CreateDirectory(Home);
         var cmd = args.Length > 0 ? args[0].ToLowerInvariant() : "";
         if (cmd.StartsWith("-psn_")) cmd = ""; // old macOS Finder launch argument
@@ -77,7 +84,23 @@ static class Program
                 return 0;
             }
         }
-        if (args.Length == 0 || args[0] is not ("--snapshot" or "--popup")) EnsureTrackerRunning();
+        bool normalWindow = args.Length == 0 || args[0] is not ("--snapshot" or "--popup");
+        if (normalWindow)
+        {
+            // Only one window: a second start (e.g. clicking an achievement pop-up) brings the open one to the front.
+            var showName = InstanceKey + "_show";
+            if (EventWaitHandle.TryOpenExisting(showName, out var existing))
+            {
+                using (existing) existing.Set();
+                return 0;
+            }
+            var show = new EventWaitHandle(false, EventResetMode.AutoReset, showName);
+            new Thread(() =>
+            {
+                while (show.WaitOne()) Avalonia.Threading.Dispatcher.UIThread.Post(App.BringToFront);
+            }) { IsBackground = true, Name = "show window" }.Start();
+            EnsureTrackerRunning();
+        }
         App.Args = args;
         AppDomain.CurrentDomain.UnhandledException += (_, e) => LogError("unhandled: " + e.ExceptionObject);
         return BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
@@ -103,6 +126,7 @@ static class Program
             try { if (!mutex.WaitOne(TimeSpan.FromSeconds(30))) return 0; }
             catch (AbandonedMutexException) { }
         }
+        AppDomain.CurrentDomain.UnhandledException += (_, e) => LogError("tracker crashed: " + e.ExceptionObject);
         Updater.CleanUp();
         File.WriteAllText(PidFile, Environment.ProcessId.ToString());
         Platform.LowPriority();
@@ -240,21 +264,33 @@ static class Program
         AllowTrailingCommas = true,
     });
 
+    /// Three processes (tracker, window, pop-ups) read and save config.json, so reads retry briefly
+    /// and saves go through a temp file that replaces config.json in one step.
     static Config ReadConfig()
     {
-        try
+        Exception? last = null;
+        for (int attempt = 0; attempt < 6; attempt++)
         {
-            if (File.Exists(ConfigPath))
-                return JsonSerializer.Deserialize(File.ReadAllText(ConfigPath), Json.Config) ?? new Config();
-            var cfg = new Config();
-            File.WriteAllText(ConfigPath, JsonSerializer.Serialize(cfg, Json.Config));
-            return cfg;
+            try
+            {
+                if (!File.Exists(ConfigPath))
+                {
+                    var fresh = new Config();
+                    SaveSettings(fresh);
+                    return fresh;
+                }
+                string text;
+                using (var fs = new FileStream(ConfigPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete))
+                using (var r = new StreamReader(fs))
+                    text = r.ReadToEnd();
+                if (text.Trim().Length > 0 && JsonSerializer.Deserialize(text, Json.Config) is Config cfg) return cfg;
+                last = new JsonException("config.json is empty");
+            }
+            catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException) { last = ex; }
+            Thread.Sleep(60);
         }
-        catch (Exception ex) when (ex is IOException or JsonException)
-        {
-            LogError("config: " + ex.Message);
-            return new Config();
-        }
+        LogError("config: " + last?.Message);
+        return new Config { Unreadable = true };
     }
 
     internal static string ReadLanguage() => ReadConfig().Language;
@@ -263,8 +299,23 @@ static class Program
 
     internal static void SaveSettings(Config cfg)
     {
-        try { File.WriteAllText(ConfigPath, JsonSerializer.Serialize(cfg, Json.Config)); }
-        catch (IOException ex) { LogError("config save: " + ex.Message); }
+        if (cfg.Unreadable && File.Exists(ConfigPath)) { LogError("config save skipped: config.json couldn't be read"); return; }
+        var tmp = ConfigPath + "." + Environment.ProcessId + ".tmp";
+        for (int attempt = 0; attempt < 6; attempt++)
+        {
+            try
+            {
+                File.WriteAllText(tmp, JsonSerializer.Serialize(cfg, Json.Config));
+                File.Move(tmp, ConfigPath, overwrite: true);
+                return;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                if (attempt == 5) LogError("config save: " + ex.Message);
+                else Thread.Sleep(60);
+            }
+        }
+        try { File.Delete(tmp); } catch { }
     }
 
     /// The Steam folder: from config.json if set, otherwise found automatically.
@@ -327,6 +378,9 @@ static class Program
 
 public sealed class Config
 {
+    /// Set when config.json couldn't be read: such a stand-in must never be saved over the real file.
+    [JsonIgnore] public bool Unreadable { get; set; }
+
     /// Steam language for achievement names, e.g. "english" or "german".
     public string Language { get; set; } = "english";
     /// Leave empty to find Steam automatically.
@@ -365,6 +419,8 @@ public sealed class Config
     public string OnlineSteamAccount { get; set; } = "";
     /// The Steam account linked to the Trophyline account for verified scores (empty = not linked).
     public string VerifiedSteam { get; set; } = "";
+    /// What was last sent to the server as your name, icon and links (so unchanged details aren't re-sent).
+    public string UploadedProfile { get; set; } = "";
     /// When the server last checked your scores with Steam (Unix time).
     public long LastVerify { get; set; }
     /// Accent colour of the window, e.g. "#66C0F4".

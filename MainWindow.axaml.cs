@@ -94,6 +94,11 @@ public partial class MainWindow : Window
             Program.SaveSettings(cfg);
         };
         NavSettings.IsCheckedChanged += (_, _) => { if (NavSettings.IsChecked == true && !syncingNav) { BuildSettings(); ShowPage(SettingsPage); } };
+        // On a sub-page (a game, a player, Playtime/Storage) the sidebar button is already highlighted, so
+        // clicking it raises no IsCheckedChanged: Click still fires, so go back to the main page from there.
+        NavGames.Click += (_, _) => { if (!GamesPage.IsVisible) ShowPage(GamesPage); };
+        NavLeaderboard.Click += async (_, _) => { if (!LeaderboardPage.IsVisible) { ShowPage(LeaderboardPage); await LoadLeaderboard(); } };
+        NavSettings.Click += (_, _) => { if (!SettingsPage.IsVisible) { BuildSettings(); ShowPage(SettingsPage); } };
         GameSoundtrack.SelectionChanged += (_, _) => SoundtrackChanged();
         PauseOnQuitSwitch.IsCheckedChanged += (_, _) =>
         {
@@ -150,6 +155,7 @@ public partial class MainWindow : Window
         };
         Activated += async (_, _) =>
         {
+            if (data != null) { BuildProfile(); UpdateAvatar(); } // name or icon may have changed elsewhere
             if (!loading && lastLoad != default && DateTime.Now - lastLoad > TimeSpan.FromMinutes(2))
                 await LoadAsync(online: false);
         };
@@ -164,9 +170,11 @@ public partial class MainWindow : Window
 
     // =============== loading ===============
 
+    bool reloadPending; // a reload asked for while one ran (new unlock, other Steam account): run it after
+
     async Task LoadAsync(bool online)
     {
-        if (loading) return;
+        if (loading) { reloadPending = true; return; }
         loading = true;
         try
         {
@@ -199,7 +207,11 @@ public partial class MainWindow : Window
                 catch (Exception ex) { Program.LogError("online refresh: " + ex.Message); }
             }
         }
-        finally { loading = false; }
+        finally
+        {
+            loading = false;
+            if (reloadPending) { reloadPending = false; _ = LoadAsync(false); }
+        }
     }
 
     void Apply(SteamData d)
@@ -253,9 +265,16 @@ public partial class MainWindow : Window
 
     // =============== sidebar ===============
 
+    /// Your Trophyline name when you're logged in (what others see), otherwise your Steam name.
+    string DisplayName()
+    {
+        var cfg = Program.Settings();
+        return cfg.OnlineId.Length > 0 && cfg.OnlineName.Trim().Length > 0 ? cfg.OnlineName.Trim() : data?.PersonaName ?? "Steam player";
+    }
+
     void BuildProfile()
     {
-        var name = data?.PersonaName ?? "Steam player";
+        var name = DisplayName();
         ProfileName.Text = name;
         AvatarLetter.Text = name.Length > 0 ? char.ToUpper(name[0]).ToString() : "?";
         bool tracking = Program.TrackerRunning();
@@ -570,7 +589,11 @@ public partial class MainWindow : Window
         ShowPage(pageBeforeGame ?? GamesPage);
     }
 
-    void ShowAllGames_Click(object? sender, RoutedEventArgs e) => NavGames.IsChecked = true;
+    void ShowAllGames_Click(object? sender, RoutedEventArgs e)
+    {
+        if (NavGames.IsChecked == true) ShowPage(GamesPage); // already highlighted (e.g. from a game page)
+        else NavGames.IsChecked = true;
+    }
 
     // =============== storage ===============
 
@@ -791,6 +814,12 @@ public partial class MainWindow : Window
                     + (Platform.Mac ? " On macOS, Trophyline tells you about new versions; you download them yourself." : "");
             DeleteAccountButton.IsEnabled = cfg.OnlineId.Length > 0;
             if (cfg.OnlineId.Length == 0) DeleteAccountHint.Text = "You're not logged in. Log in first to delete an account.";
+            else if (DeleteAccountHint.Text?.StartsWith("You're not logged in") == true || DeleteAccountText.Text == "Deleted")
+            {
+                // logged in (again) since: drop the old notes
+                DeleteAccountHint.Text = "";
+                DeleteAccountText.Text = "Delete account";
+            }
             ShowAccountState();
             OnlineNameBox.Text = cfg.OnlineName.Length > 0 ? cfg.OnlineName : data?.PersonaName ?? "";
             BuildLinkBoxes();
@@ -868,13 +897,14 @@ public partial class MainWindow : Window
 
         PlaytimeSub.Text = sessions.Count == 0 && all.Count == 0
             ? "Trophyline writes down every play session from now on: when you start a game and when you stop."
-            : $"Tracked since {Fmt.Local(all.Min(s => s.Start)):dd.MM.yyyy}  ·  {all.Count} sessions  ·  {Fmt.Hours(all.Sum(s => s.Minutes))} in total";
+            : $"Tracked since {Fmt.Local(all.Min(s => s.Start)):dd.MM.yyyy}  ·  {all.Count} session{(all.Count == 1 ? "" : "s")}  ·  "
+              + $"{Fmt.Hours(Math.Max(1, all.Sum(s => s.Minutes)))} in total";
 
         PlaytimeTiles.Children.Clear();
         PlaytimeTiles.Children.Add(Tile("IconClock", todayMin > 0 ? Fmt.Hours(todayMin) : "0 h", "today", today.ToString("dddd"), Palette.Brush));
         PlaytimeTiles.Children.Add(Tile("IconChart", weekMin > 0 ? Fmt.Hours(weekMin) : "0 h", "this week", $"since Monday {monday:dd.MM}", Fmt.Purple));
         PlaytimeTiles.Children.Add(Tile("IconGame", monthMin > 0 ? Fmt.Hours(monthMin) : "0 h", "last 30 days",
-            monthMin > 0 ? $"about {Fmt.Hours(monthMin / 30)} a day" : "nothing yet", Fmt.Green));
+            monthMin > 0 ? $"about {Fmt.Hours(Math.Max(1, monthMin / 30))} a day" : "nothing yet", Fmt.Green));
         PlaytimeTiles.Children.Add(longest != null
             ? Tile("IconBolt", Fmt.Hours(Math.Max(1, longest.Minutes)), "longest session",
                    $"{(byId.TryGetValue(longest.AppId, out var lg) ? lg.Name : "App " + longest.AppId)} · {Fmt.Local(longest.Start):dd.MM}", Fmt.Gold)
@@ -1097,6 +1127,8 @@ public partial class MainWindow : Window
         AccountNote("You're logged in with Steam. Reading your achievements from Steam…", good: true);
         seasonIds.Clear();
         BuildSettings();
+        BuildProfile(); // the sidebar card now shows your Trophyline name
+        UpdateAvatar();
         await UploadNow(); // this also starts the first check with Steam
         if (Program.Settings().LastVerify == 0) await RunVerify();
         else { VerifyNote(null); await ShowVerifyState(); }
@@ -1108,9 +1140,11 @@ public partial class MainWindow : Window
     async void SteamLogin_Click(object? sender, RoutedEventArgs e)
     {
         loginCancel?.Cancel();
-        loginCancel = new CancellationTokenSource();
+        var cancel = loginCancel = new CancellationTokenSource();
         AccountNote("Steam's login page opened in your browser. Log in there, then come back here.", good: true);
-        await AfterLogin(await Online.LoginWithSteam(loginCancel.Token));
+        var err = await Online.LoginWithSteam(cancel.Token);
+        if (cancel.IsCancellationRequested) return; // replaced by a newer attempt (or the name code): don't show "cancelled"
+        await AfterLogin(err);
     }
 
     // ----- name code: for networks that block Steam's login page -----
@@ -1236,6 +1270,8 @@ public partial class MainWindow : Window
     async void Logout_Click(object? sender, RoutedEventArgs e)
     {
         await Online.Logout();
+        BuildProfile();
+        UpdateAvatar();
         AccountNote("Logged out. Your account and your place on the leaderboards are still there: log in with the same Steam account to get back.", good: true);
         seasonIds.Clear();
         BuildSettings();
@@ -1248,6 +1284,8 @@ public partial class MainWindow : Window
         var cfg = Program.Settings();
         cfg.OnlineName = name;
         Program.SaveSettings(cfg);
+        BuildProfile(); // the sidebar card shows the new name right away
+        UpdateAvatar();
         if (Online.Enabled) await UploadNow();
         else OnlineStatus.Text = "Name saved. It shows once you're logged in.";
     }
@@ -1314,7 +1352,9 @@ public partial class MainWindow : Window
         var seasonId = board == "season" && SeasonPick.SelectedIndex >= 0 && SeasonPick.SelectedIndex < seasonIds.Count ? seasonIds[SeasonPick.SelectedIndex] : null;
 
         LbSub.Text = "Loading…";
+        int req = ++boardRequest;
         var res = await Online.Leaderboard(board, seasonId);
+        if (req != boardRequest) return; // another tab or season was picked meanwhile: its reply wins
         if (res == null)
         {
             LbSub.Text = "Couldn't reach the Trophyline server. Check your internet connection and press Refresh.";
@@ -1433,7 +1473,7 @@ public partial class MainWindow : Window
     void UpdateAvatar()
     {
         var icon = Shop.Find(Shop.Load().Equipped);
-        var name = data?.PersonaName ?? "?";
+        var name = DisplayName();
         AvatarLetter.Text = icon?.Glyph ?? (name.Length > 0 ? char.ToUpper(name[0]).ToString() : "?");
         AvatarLetter.FontSize = icon != null ? 21 : 17;
         var pic = Avatars.Mine();
@@ -1492,14 +1532,22 @@ public partial class MainWindow : Window
 
     // ----- someone's profile -----
 
-    void PlayerBack_Click(object? sender, RoutedEventArgs e) => NavLeaderboard.IsChecked = true;
+    async void PlayerBack_Click(object? sender, RoutedEventArgs e)
+    {
+        ShowPage(LeaderboardPage);
+        await LoadLeaderboard();
+    }
+
+    int boardRequest, playerRequest; // newest request wins; slower older replies are dropped
 
     async void OpenPlayer(string id)
     {
         ShowPage(PlayerPage);
         PlayerBody.Children.Clear();
         PlayerBody.Children.Add(new TextBlock { Text = "Loading profile…", Foreground = Res("Muted") });
+        int req = ++playerRequest;
         var p = await Online.Player(id);
+        if (req != playerRequest || !PlayerPage.IsVisible) return; // another profile was opened, or the page left
         PlayerBody.Children.Clear();
         if (p == null) { PlayerBody.Children.Add(new TextBlock { Text = "Couldn't load this profile.", Foreground = Res("Muted") }); return; }
 
@@ -2037,7 +2085,9 @@ public partial class MainWindow : Window
             if (Platform.Mac || r.Note != null)
             {
                 UpdateBannerText.Text = $"Trophyline {r.Latest.ToString(3)} is out.";
-                if (manual) Platform.OpenUrl(Updater.ReleasesPage);
+                UpdateBanner.IsVisible = true;
+                // only the Mac has to download by hand; on errors the note above says what happened
+                if (manual && Platform.Mac) Platform.OpenUrl(Updater.ReleasesPage);
             }
         }
         finally { updating = false; }
@@ -2071,7 +2121,8 @@ public partial class MainWindow : Window
             deleteArmed = DateTime.Now;
             DeleteAccountText.Text = "Click again to delete for good";
             await Task.Delay(6000);
-            if (DateTime.Now - deleteArmed >= TimeSpan.FromSeconds(6)) DeleteAccountText.Text = "Delete account";
+            // still armed from this click (not used meanwhile): back to the normal text
+            if (deleteArmed != default && DateTime.Now - deleteArmed >= TimeSpan.FromSeconds(6)) DeleteAccountText.Text = "Delete account";
             return;
         }
         deleteArmed = default;
@@ -2098,9 +2149,12 @@ public partial class MainWindow : Window
     string chatWithName = "";
     long chatLast;               // newest message id shown
     bool chatBusy, chatBlocked;
+    int chatGen;                 // bumped when the room changes: replies for the old room are thrown away
+    bool chatAgain, chatAgainFull; // a refresh asked for while one was running: run it right after
 
     async Task OpenChat(string? with, string name)
     {
+        chatGen++;
         chatWith = with;
         chatWithName = name;
         chatLast = 0;
@@ -2111,8 +2165,9 @@ public partial class MainWindow : Window
 
     async Task RefreshChat(bool full)
     {
-        if (chatBusy) return;
+        if (chatBusy) { chatAgain = true; chatAgainFull |= full; return; }
         chatBusy = true;
+        int gen = chatGen;
         try
         {
             chatTimer.Start();
@@ -2128,9 +2183,11 @@ public partial class MainWindow : Window
             ChatProfileButton.IsVisible = ChatBlockButton.IsVisible = chatWith != null;
 
             if (full) await BuildChatRooms();
+            if (gen != chatGen) return;
 
             JsonNode? res = chatWith == null ? await Online.Lobby(chatLast)
                           : canWrite ? await Online.Dm(chatWith, chatLast) : null;
+            if (gen != chatGen) return; // the room changed meanwhile: these messages belong to the old one
             var msgs = res?["messages"]?.AsArray() ?? [];
             bool atBottom = ChatScroll.Offset.Y >= ChatScroll.Extent.Height - ChatScroll.Viewport.Height - 40;
             foreach (var m in msgs)
@@ -2144,7 +2201,16 @@ public partial class MainWindow : Window
             if (msgs.Count > 0 && (full || atBottom))
                 Dispatcher.UIThread.Post(() => ChatScroll.ScrollToEnd(), DispatcherPriority.Background);
         }
-        finally { chatBusy = false; }
+        finally
+        {
+            chatBusy = false;
+            if (chatAgain)
+            {
+                bool again = chatAgainFull;
+                chatAgain = chatAgainFull = false;
+                _ = RefreshChat(again);
+            }
+        }
     }
 
     async Task BuildChatRooms()
@@ -2252,7 +2318,7 @@ public partial class MainWindow : Window
         chatBlocked = !chatBlocked;
         ChatBlockText.Text = chatBlocked ? "Unblock" : "Block";
         ChatTitleSub.Text = chatBlocked ? $"Blocked: {chatWithName} can't message you, and you won't see their messages." : "private · messages disappear after 1 hour";
-        if (chatBlocked) { chatLast = 0; ChatMessages.Children.Clear(); await RefreshChat(full: true); }
+        if (chatBlocked) { chatGen++; chatLast = 0; ChatMessages.Children.Clear(); await RefreshChat(full: true); }
     }
 
     Control[] AllPages => [OverviewPage, AchievementsPage, GamesPage, GamePage, LevelPage, LeaderboardPage, PlayerPage, ChatPage, ShopPage, PlaytimePage, StoragePage, MusicPage, SettingsPage];

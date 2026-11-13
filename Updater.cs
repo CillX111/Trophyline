@@ -47,14 +47,28 @@ static class Updater
         using var http = NewHttp(redirects: false);
         using var res = await http.GetAsync(ReleasesPage);
         var tag = res.Headers.Location?.ToString().Split('/').LastOrDefault() ?? "";
-        return Version.TryParse(tag.TrimStart('v'), out var v) ? v : null;
+        // always 3 parts (a tag like v1.9 would make Version.ToString(3) throw)
+        return Version.TryParse(tag.TrimStart('v'), out var v) ? new Version(v.Major, v.Minor, Math.Max(0, v.Build)) : null;
     }
 
-    /// Leftover from the last update: the previous program, renamed. Removed at the next start.
+    /// The installed program's path, also when this process runs from a renamed old copy (Trophyline.exe.old…).
+    static string? InstalledExe()
+    {
+        if (Environment.ProcessPath is not string exe) return null;
+        int cut = exe.IndexOf(".old", StringComparison.OrdinalIgnoreCase);
+        return cut > 0 && Path.GetFileName(exe).Contains(".old", StringComparison.OrdinalIgnoreCase) ? exe[..cut] : exe;
+    }
+
+    /// Leftovers from earlier updates: previous programs, renamed. Removed once nothing runs them any more.
     public static void CleanUp()
     {
-        if (Environment.ProcessPath is not string exe) return;
-        try { if (File.Exists(exe + ".old")) File.Delete(exe + ".old"); } catch { }
+        if (InstalledExe() is not string exe) return;
+        try
+        {
+            foreach (var old in Directory.EnumerateFiles(Path.GetDirectoryName(exe)!, Path.GetFileName(exe) + ".old*"))
+                try { File.Delete(old); } catch { } // still running (an open window): next time
+        }
+        catch { }
         try { if (File.Exists(exe + ".new")) File.Delete(exe + ".new"); } catch { }
     }
 
@@ -66,13 +80,14 @@ static class Updater
         catch (Exception ex) { Program.LogError("update check: " + ex.Message); return null; }
         if (latest == null) return null;
         if (latest <= Current) return new Result(false, latest, false, null);
-        if (!install || AssetName is not string asset || Environment.ProcessPath is not string exe)
+        if (!install || AssetName is not string asset || InstalledExe() is not string exe)
             return new Result(true, latest, false, Platform.Mac ? "Download the new version from GitHub." : null);
 
         // one update at a time (window and tracker may both try): an exclusively opened lock file
         FileStream gate;
         try { gate = new FileStream(Path.Combine(Program.Home, "update.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None, 1, FileOptions.DeleteOnClose); }
-        catch (IOException) { return new Result(true, latest, false, "Another Trophyline is updating right now."); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        { return new Result(true, latest, false, "Another Trophyline is updating right now."); }
         using var _ = gate;
         try
         {
@@ -101,8 +116,11 @@ static class Updater
                 File.SetUnixFileMode(tmp, File.GetUnixFileMode(exe) | UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute);
 
             // swap: the running program can be renamed but not overwritten
-            if (File.Exists(exe + ".old")) File.Delete(exe + ".old");
-            File.Move(exe, exe + ".old");
+            // a window still open from the last update keeps running its .old copy: then use a new name
+            var old = exe + ".old";
+            try { if (File.Exists(old)) File.Delete(old); }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { old = exe + ".old-" + DateTime.UtcNow.Ticks; }
+            File.Move(exe, old);
             File.Move(tmp, exe);
             Program.LogWindow($"updated {Current} -> {latest}");
             return new Result(true, latest, true, null);
@@ -111,7 +129,14 @@ static class Updater
         {
             Program.LogError("update: " + ex.Message);
             try { if (File.Exists(exe + ".new")) File.Delete(exe + ".new"); } catch { }
-            if (!File.Exists(exe) && File.Exists(exe + ".old")) File.Move(exe + ".old", exe); // put the old one back
+            try
+            {
+                if (!File.Exists(exe)) // put the old one back
+                    foreach (var old in Directory.EnumerateFiles(Path.GetDirectoryName(exe)!, Path.GetFileName(exe) + ".old*")
+                                                 .OrderByDescending(File.GetLastWriteTimeUtc))
+                    { File.Move(old, exe); break; }
+            }
+            catch { }
             return new Result(true, latest, false, ex is UnauthorizedAccessException
                 ? "Trophyline's folder isn't writable, so it can't update itself."
                 : "The update couldn't be downloaded. It'll try again later.");
@@ -123,14 +148,18 @@ static class Updater
     {
         return new Timer(_ =>
         {
-            if (!Allowed || !Program.Settings().WelcomeAccepted) return; // not before the notice about updates was shown
-            var r = CheckAndInstall().GetAwaiter().GetResult();
-            Program.TrimMemory();
-            if (r is { Installed: true } && Environment.ProcessPath is string exe)
+            try
             {
-                Process.Start(new ProcessStartInfo(exe) { ArgumentList = { "--background", "--after-update" }, UseShellExecute = false });
-                Environment.Exit(0); // the new tracker takes over
+                if (!Allowed || !Program.Settings().WelcomeAccepted) return; // not before the notice about updates was shown
+                var r = CheckAndInstall().GetAwaiter().GetResult();
+                Program.TrimMemory();
+                if (r is { Installed: true } && InstalledExe() is string exe)
+                {
+                    Process.Start(new ProcessStartInfo(exe) { ArgumentList = { "--background", "--after-update" }, UseShellExecute = false });
+                    Environment.Exit(0); // the new tracker takes over
+                }
             }
+            catch (Exception ex) { Program.LogError("update: " + ex.Message); } // keep the tracker alive
         }, null, TimeSpan.FromMinutes(3), TimeSpan.FromHours(12));
     }
 }

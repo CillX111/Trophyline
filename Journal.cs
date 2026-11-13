@@ -24,6 +24,8 @@ sealed class Journal
     public string HtmlPath => htmlPath;
     public int Count => keys.Count;
 
+    public bool Has(string key) => keys.Contains(key);
+
     /// Adds unlocks that aren't in the journal yet. Returns how many were new.
     public int Add(IEnumerable<Unlock> unlocks, bool fillMissingTimeWithNow) => AddNew(unlocks, fillMissingTimeWithNow).Count;
 

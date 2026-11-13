@@ -45,7 +45,10 @@ static partial class Steam
             {
                 if (((data >> bit) & 1) == 0) continue;
                 var bitSchema = bits.Obj(bit.ToString());
-                var api = bitSchema.Str("name") ?? $"stat{statId}_bit{bit}";
+                // An unlock the schema doesn't describe yet (game update, schema not re-downloaded): skip it until
+                // the new schema arrives (that re-reads the game) instead of saving it under a made-up name
+                // that would show up twice later.
+                if (bitSchema.Str("name") is not string api) continue;
                 var display = bitSchema.Obj("display");
                 result.Add(new Unlock(
                     Time: times.Num(bit.ToString()) is long t && t > 0 ? t : null,

@@ -98,7 +98,13 @@
     <Grid ColumnDefinitions="236,*">
 
         <!-- ================= sidebar ================= -->
-        <Border Background="{StaticResource Panel}" BorderBrush="{StaticResource Line}" BorderThickness="0,0,1,0">
+        <Border BorderBrush="{StaticResource Line}" BorderThickness="0,0,1,0">
+            <Border.Background>
+                <LinearGradientBrush StartPoint="0%,0%" EndPoint="0%,100%">
+                    <GradientStop Color="#121A24" Offset="0"/>
+                    <GradientStop Color="#0C1117" Offset="1"/>
+                </LinearGradientBrush>
+            </Border.Background>
             <DockPanel>
                 <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="22,26,0,26" Spacing="12">
                     <Image Source="/assets/logo.png" Width="40" Height="40"/>
@@ -196,11 +202,13 @@
 
         <!-- ================= pages ================= -->
         <Panel Grid.Column="1">
+            <!-- soft accent glow behind every page -->
+            <Border Background="{DynamicResource AccentWash}" IsHitTestVisible="False"/>
 
             <!-- Overview -->
-            <ScrollViewer x:Name="OverviewPage">
+            <ScrollViewer x:Name="OverviewPage" Classes="page">
                 <StackPanel Margin="30,26,30,30">
-                    <Border Height="290" CornerRadius="18" Background="{StaticResource Card}" ClipToBounds="True">
+                    <Border Height="300" CornerRadius="22" Background="{StaticResource Card}" ClipToBounds="True" BorderBrush="#1FFFFFFF" BorderThickness="1" BoxShadow="0 16 44 0 #66000000">
                         <Panel>
                             <Image x:Name="HeroImage" Stretch="UniformToFill" VerticalAlignment="Top"/>
                             <Border>
@@ -221,12 +229,13 @@
                                 </Border.Background>
                             </Border>
                             <StackPanel VerticalAlignment="Bottom" Margin="32,0,0,30">
-                                <TextBlock Text="WELCOME BACK" Foreground="{DynamicResource Accent}" FontWeight="Bold" FontSize="12"/>
+                                <TextBlock Text="WELCOME BACK" Classes="kicker" FontSize="12"/>
                                 <TextBlock x:Name="Persona" FontSize="44" FontWeight="Bold" Margin="0,2,0,0"/>
                                 <TextBlock x:Name="HeroSub" Foreground="#C5D0DC" FontSize="15" Margin="0,4,0,0"/>
                             </StackPanel>
                             <Image x:Name="HeroLogo" MaxHeight="120" MaxWidth="340" HorizontalAlignment="Right" VerticalAlignment="Bottom"
                                    Margin="0,0,32,28"/>
+                            <Border Height="3" VerticalAlignment="Bottom" Background="{DynamicResource AccentGradient}" Opacity="0.9"/>
                         </Panel>
                     </Border>
 
@@ -277,11 +286,18 @@
             </ScrollViewer>
 
             <!-- Achievements -->
-            <Grid x:Name="AchievementsPage" RowDefinitions="Auto,Auto,*" Margin="30,26,30,0" IsVisible="False">
-                <StackPanel>
-                    <TextBlock Text="Achievements" Classes="pageTitle"/>
-                    <TextBlock x:Name="AchSub" Classes="muted" Margin="0,4,0,0"/>
-                </StackPanel>
+            <Grid x:Name="AchievementsPage" Classes="page" RowDefinitions="Auto,Auto,*" Margin="30,26,30,0" IsVisible="False">
+                <Border Classes="pageHead"><Panel>
+                    <PathIcon Classes="headMark" Data="{StaticResource IconStar}"/>
+                    <Grid ColumnDefinitions="Auto,*">
+                        <Border Classes="headIcon"><PathIcon Data="{StaticResource IconStar}"/></Border>
+                        <StackPanel Grid.Column="1" Classes="headText">
+                            <TextBlock Classes="kicker" Text="YOUR TROPHY CASE"/>
+                            <TextBlock Text="Achievements" Classes="pageTitle"/>
+                            <TextBlock x:Name="AchSub" Classes="muted" Margin="0,2,0,0"/>
+                        </StackPanel>
+                    </Grid>
+                </Panel></Border>
                 <Grid Grid.Row="1" ColumnDefinitions="*,12,230,12,200" Margin="0,18,0,8">
                     <TextBox x:Name="AchSearch" Classes="search" Watermark="Search achievements or games…">
                         <TextBox.InnerLeftContent>
@@ -333,10 +349,19 @@
             </Grid>
 
             <!-- Games -->
-            <Grid x:Name="GamesPage" RowDefinitions="Auto,*" IsVisible="False">
+            <Grid x:Name="GamesPage" Classes="page" RowDefinitions="Auto,*" IsVisible="False">
                 <StackPanel Margin="30,26,30,0">
-                    <TextBlock Text="Games" Classes="pageTitle"/>
-                    <TextBlock x:Name="GamesSub" Classes="muted" Margin="0,4,0,0"/>
+                    <Border Classes="pageHead"><Panel>
+                        <PathIcon Classes="headMark" Data="{StaticResource IconGame}"/>
+                        <Grid ColumnDefinitions="Auto,*">
+                            <Border Classes="headIcon"><PathIcon Data="{StaticResource IconGame}"/></Border>
+                            <StackPanel Grid.Column="1" Classes="headText">
+                                <TextBlock Classes="kicker" Text="YOUR LIBRARY"/>
+                                <TextBlock Text="Games" Classes="pageTitle"/>
+                                <TextBlock x:Name="GamesSub" Classes="muted" Margin="0,2,0,0"/>
+                            </StackPanel>
+                        </Grid>
+                    </Panel></Border>
                     <Grid ColumnDefinitions="*,12,220" Margin="0,18,0,18">
                         <TextBox x:Name="GameSearch" Classes="search" Watermark="Search games…">
                             <TextBox.InnerLeftContent>
@@ -356,7 +381,7 @@
             </Grid>
 
             <!-- One game -->
-            <Grid x:Name="GamePage" RowDefinitions="Auto,Auto,*" IsVisible="False">
+            <Grid x:Name="GamePage" Classes="page" RowDefinitions="Auto,Auto,*" IsVisible="False">
                 <Panel Height="270" ClipToBounds="True">
                     <Image x:Name="GameHero" Stretch="UniformToFill" VerticalAlignment="Top"/>
                     <Border>
@@ -454,11 +479,18 @@
             </Grid>
 
             <!-- Storage -->
-            <Grid x:Name="StoragePage" RowDefinitions="Auto,*" IsVisible="False">
-                <StackPanel Margin="30,26,30,18">
-                    <TextBlock Text="Storage" Classes="pageTitle"/>
-                    <TextBlock x:Name="StorageSub" Classes="muted" Margin="0,4,0,0"/>
-                </StackPanel>
+            <Grid x:Name="StoragePage" Classes="page" RowDefinitions="Auto,*" IsVisible="False">
+                <StackPanel Margin="30,26,30,18"><Border Classes="pageHead"><Panel>
+                    <PathIcon Classes="headMark" Data="{StaticResource IconDrive}"/>
+                    <Grid ColumnDefinitions="Auto,*">
+                        <Border Classes="headIcon"><PathIcon Data="{StaticResource IconDrive}"/></Border>
+                        <StackPanel Grid.Column="1" Classes="headText">
+                            <TextBlock Classes="kicker" Text="DISK SPACE"/>
+                            <TextBlock Text="Storage" Classes="pageTitle"/>
+                            <TextBlock x:Name="StorageSub" Classes="muted" Margin="0,2,0,0"/>
+                        </StackPanel>
+                    </Grid>
+                </Panel></Border></StackPanel>
                 <ScrollViewer Grid.Row="1">
                     <ItemsControl x:Name="StorageList" Margin="30,0,30,24">
                         <ItemsControl.ItemTemplate>
@@ -493,15 +525,20 @@
             </Grid>
 
             <!-- Music -->
-            <ScrollViewer x:Name="MusicPage" IsVisible="False">
+            <ScrollViewer x:Name="MusicPage" Classes="page" IsVisible="False">
                 <StackPanel Margin="30,26,30,30">
-                    <Grid ColumnDefinitions="*,Auto">
-                        <StackPanel>
-                            <TextBlock Text="Music" Classes="pageTitle"/>
-                            <TextBlock Classes="muted" Margin="0,4,0,0" TextWrapping="Wrap"
-                                       Text="Your Spotify, right here while you game. It plays in the Spotify app, so it keeps going when Trophyline is closed."/>
-                        </StackPanel>
-                    </Grid>
+                    <Border Classes="pageHead"><Panel>
+                        <PathIcon Classes="headMark" Data="{StaticResource IconMusic}"/>
+                        <Grid ColumnDefinitions="Auto,*">
+                            <Border Classes="headIcon"><PathIcon Data="{StaticResource IconMusic}"/></Border>
+                            <StackPanel Grid.Column="1" Classes="headText">
+                                <TextBlock Classes="kicker" Text="SPOTIFY"/>
+                                <TextBlock Text="Music" Classes="pageTitle"/>
+                                <TextBlock Classes="muted" Margin="0,2,0,0" TextWrapping="Wrap"
+                                           Text="Your Spotify, right here while you game. It plays in the Spotify app, so it keeps going when Trophyline is closed."/>
+                            </StackPanel>
+                        </Grid>
+                    </Panel></Border>
 
                     <!-- ===== now playing: big cover, blurred and colour-matched background, moving equalizer ===== -->
                     <Border x:Name="Hero" CornerRadius="20" ClipToBounds="True" Margin="0,18,0,0" Height="268"
@@ -621,13 +658,28 @@
             </ScrollViewer>
 
             <!-- Level & XP -->
-            <ScrollViewer x:Name="LevelPage" IsVisible="False">
+            <ScrollViewer x:Name="LevelPage" Classes="page" IsVisible="False">
                 <StackPanel Margin="30,26,30,30">
-                    <TextBlock Text="Level" Classes="pageTitle"/>
-                    <TextBlock Classes="muted" Margin="0,4,0,0" TextWrapping="Wrap"
-                               Text="Everything you do earns XP: unlocking achievements (rare ones give more), finishing games and playing. It counts your whole Steam history."/>
+                    <Border Classes="pageHead"><Panel>
+                        <PathIcon Classes="headMark" Data="{StaticResource IconShield}"/>
+                        <Grid ColumnDefinitions="Auto,*">
+                            <Border Classes="headIcon"><PathIcon Data="{StaticResource IconShield}"/></Border>
+                            <StackPanel Grid.Column="1" Classes="headText">
+                                <TextBlock Classes="kicker" Text="LEVEL &amp; XP"/>
+                                <TextBlock Text="Level" Classes="pageTitle"/>
+                                <TextBlock Classes="muted" Margin="0,2,0,0" TextWrapping="Wrap"
+                                           Text="Everything you do earns XP: unlocking achievements (rare ones give more), finishing games and playing. It counts your whole Steam history."/>
+                            </StackPanel>
+                        </Grid>
+                    </Panel></Border>
 
-                    <Border Classes="card" Padding="26,22" Margin="0,18,0,0">
+                    <Border Classes="card" Padding="26,22" Margin="0,18,0,0" BorderBrush="#55F5C451" BoxShadow="0 10 40 0 #33F5C451">
+                        <Border.Background>
+                            <LinearGradientBrush StartPoint="0%,0%" EndPoint="100%,100%">
+                                <GradientStop Color="#2A2617" Offset="0"/>
+                                <GradientStop Color="#151C25" Offset="0.6"/>
+                            </LinearGradientBrush>
+                        </Border.Background>
                         <Grid ColumnDefinitions="Auto,*">
                             <Panel Width="132" Height="132">
                                 <Ellipse x:Name="BigRing" StrokeThickness="6" Stroke="{StaticResource Gold}"/>
@@ -678,24 +730,29 @@
             </ScrollViewer>
 
             <!-- Leaderboards (online) -->
-            <ScrollViewer x:Name="LeaderboardPage" IsVisible="False">
+            <ScrollViewer x:Name="LeaderboardPage" Classes="page" IsVisible="False">
                 <StackPanel Margin="30,26,30,30">
-                    <DockPanel>
-                        <Button x:Name="LbRefresh" DockPanel.Dock="Right" Classes="pill" Click="LbRefresh_Click" VerticalAlignment="Center">
-                            <TextBlock Text="Refresh"/>
-                        </Button>
-                        <StackPanel>
-                            <TextBlock Text="Leaderboards" Classes="pageTitle"/>
-                            <TextBlock x:Name="LbSub" Classes="muted" Margin="0,4,0,0" TextWrapping="Wrap"/>
-                        </StackPanel>
-                    </DockPanel>
+                    <Border Classes="pageHead"><Panel>
+                        <PathIcon Classes="headMark" Data="{StaticResource IconPodium}" Margin="0,-70,110,-70"/>
+                        <Grid ColumnDefinitions="Auto,*,Auto">
+                            <Border Classes="headIcon"><PathIcon Data="{StaticResource IconPodium}"/></Border>
+                            <StackPanel Grid.Column="1" Classes="headText">
+                                <TextBlock Classes="kicker" Text="ONLINE"/>
+                                <TextBlock Text="Leaderboards" Classes="pageTitle"/>
+                                <TextBlock x:Name="LbSub" Classes="muted" Margin="0,2,0,0" TextWrapping="Wrap"/>
+                            </StackPanel>
+                            <Button x:Name="LbRefresh" Grid.Column="2" Classes="pill" Click="LbRefresh_Click" VerticalAlignment="Center" Margin="16,0,0,0">
+                                <TextBlock Text="Refresh"/>
+                            </Button>
+                        </Grid>
+                    </Panel></Border>
 
                     <!-- current season -->
-                    <Border Classes="card" Padding="22,18" Margin="0,18,0,0" ClipToBounds="True">
+                    <Border Classes="card" Padding="22,18" Margin="0,18,0,0" ClipToBounds="True" BorderBrush="#40B98CFF" BoxShadow="0 10 40 0 #2EB98CFF">
                         <Border.Background>
                             <LinearGradientBrush StartPoint="0%,0%" EndPoint="100%,100%">
-                                <GradientStop Color="#1C2633" Offset="0"/>
-                                <GradientStop Color="#151C25" Offset="1"/>
+                                <GradientStop Color="#241D3A" Offset="0"/>
+                                <GradientStop Color="#151C25" Offset="0.65"/>
                             </LinearGradientBrush>
                         </Border.Background>
                         <Grid ColumnDefinitions="*,Auto">
@@ -744,12 +801,19 @@
             </ScrollViewer>
 
             <!-- Chat -->
-            <Grid x:Name="ChatPage" IsVisible="False" ColumnDefinitions="260,*" Margin="30,26,30,24" RowDefinitions="Auto,*">
-                <StackPanel Grid.ColumnSpan="2" Margin="0,0,0,16">
-                    <TextBlock Text="Chat" Classes="pageTitle"/>
-                    <TextBlock x:Name="ChatSub" Classes="muted" Margin="0,4,0,0" TextWrapping="Wrap"
-                               Text="Talk to everyone in the lobby, or message a player privately (open their profile → Message). Messages disappear after 1 hour."/>
-                </StackPanel>
+            <Grid x:Name="ChatPage" Classes="page" IsVisible="False" ColumnDefinitions="260,*" Margin="30,26,30,24" RowDefinitions="Auto,*">
+                <Border Grid.ColumnSpan="2" Classes="pageHead" Margin="0,0,0,16"><Panel>
+                    <PathIcon Classes="headMark" Data="{StaticResource IconChat}"/>
+                    <Grid ColumnDefinitions="Auto,*">
+                        <Border Classes="headIcon"><PathIcon Data="{StaticResource IconChat}"/></Border>
+                        <StackPanel Grid.Column="1" Classes="headText">
+                            <TextBlock Classes="kicker" Text="TALK TO PLAYERS"/>
+                            <TextBlock Text="Chat" Classes="pageTitle"/>
+                            <TextBlock x:Name="ChatSub" Classes="muted" Margin="0,2,0,0" TextWrapping="Wrap"
+                                       Text="Talk to everyone in the lobby, or message a player privately (open their profile → Message). Messages disappear after 1 hour."/>
+                        </StackPanel>
+                    </Grid>
+                </Panel></Border>
 
                 <!-- conversations -->
                 <Border Grid.Row="1" Classes="card" Padding="8" Margin="0,0,16,0">
@@ -789,7 +853,7 @@
             </Grid>
 
             <!-- Someone's profile -->
-            <ScrollViewer x:Name="PlayerPage" IsVisible="False">
+            <ScrollViewer x:Name="PlayerPage" Classes="page" IsVisible="False">
                 <StackPanel Margin="30,22,30,30">
                     <Button Classes="pill" Click="PlayerBack_Click" HorizontalAlignment="Left">
                         <StackPanel Orientation="Horizontal" Spacing="8">
@@ -802,12 +866,27 @@
             </ScrollViewer>
 
             <!-- Shop -->
-            <ScrollViewer x:Name="ShopPage" IsVisible="False">
+            <ScrollViewer x:Name="ShopPage" Classes="page" IsVisible="False">
                 <StackPanel Margin="30,26,30,30">
-                    <TextBlock Text="Shop" Classes="pageTitle"/>
-                    <TextBlock Classes="muted" Margin="0,4,0,0" TextWrapping="Wrap"
-                               Text="Every level you reach gives you coins. Spend them on profile icons: they show on your profile, in the sidebar and on the online leaderboards."/>
-                    <Border Classes="card" Padding="22,18" Margin="0,18,0,0">
+                    <Border Classes="pageHead"><Panel>
+                        <PathIcon Classes="headMark" Data="{StaticResource IconCart}"/>
+                        <Grid ColumnDefinitions="Auto,*">
+                            <Border Classes="headIcon"><PathIcon Data="{StaticResource IconCart}"/></Border>
+                            <StackPanel Grid.Column="1" Classes="headText">
+                                <TextBlock Classes="kicker" Text="SPEND YOUR COINS"/>
+                                <TextBlock Text="Shop" Classes="pageTitle"/>
+                                <TextBlock Classes="muted" Margin="0,2,0,0" TextWrapping="Wrap"
+                                           Text="Every level you reach gives you coins. Spend them on profile icons: they show on your profile, in the sidebar and on the online leaderboards."/>
+                            </StackPanel>
+                        </Grid>
+                    </Panel></Border>
+                    <Border Classes="card" Padding="22,18" Margin="0,18,0,0" BorderBrush="#55F5C451" BoxShadow="0 10 40 0 #33F5C451">
+                        <Border.Background>
+                            <LinearGradientBrush StartPoint="0%,0%" EndPoint="100%,100%">
+                                <GradientStop Color="#2A2617" Offset="0"/>
+                                <GradientStop Color="#151C25" Offset="0.6"/>
+                            </LinearGradientBrush>
+                        </Border.Background>
                         <Grid ColumnDefinitions="Auto,*,Auto">
                             <Border Width="64" Height="64" CornerRadius="32" Background="#33F5C451">
                                 <PathIcon Data="{StaticResource IconCoin}" Width="34" Height="34" Foreground="{StaticResource Gold}"/>
@@ -828,10 +907,19 @@
             </ScrollViewer>
 
             <!-- Playtime (sessions recorded by the tracker) -->
-            <ScrollViewer x:Name="PlaytimePage" IsVisible="False">
+            <ScrollViewer x:Name="PlaytimePage" Classes="page" IsVisible="False">
                 <StackPanel Margin="30,26,30,30">
-                    <TextBlock Text="Playtime" Classes="pageTitle"/>
-                    <TextBlock x:Name="PlaytimeSub" Classes="muted" Margin="0,4,0,0" TextWrapping="Wrap"/>
+                    <Border Classes="pageHead"><Panel>
+                        <PathIcon Classes="headMark" Data="{StaticResource IconClock}"/>
+                        <Grid ColumnDefinitions="Auto,*">
+                            <Border Classes="headIcon"><PathIcon Data="{StaticResource IconClock}"/></Border>
+                            <StackPanel Grid.Column="1" Classes="headText">
+                                <TextBlock Classes="kicker" Text="TIME PLAYED"/>
+                                <TextBlock Text="Playtime" Classes="pageTitle"/>
+                                <TextBlock x:Name="PlaytimeSub" Classes="muted" Margin="0,2,0,0" TextWrapping="Wrap"/>
+                            </StackPanel>
+                        </Grid>
+                    </Panel></Border>
 
                     <Border x:Name="NowPlayingCard" Classes="card" Margin="0,18,0,0" Padding="0" ClipToBounds="True" IsVisible="False"
                             BorderBrush="{DynamicResource Accent}">
@@ -889,10 +977,19 @@
             </ScrollViewer>
 
             <!-- Settings -->
-            <ScrollViewer x:Name="SettingsPage" IsVisible="False">
+            <ScrollViewer x:Name="SettingsPage" Classes="page" IsVisible="False">
                 <StackPanel Margin="30,26,30,30" MaxWidth="900" HorizontalAlignment="Left">
-                    <TextBlock Text="Settings" Classes="pageTitle"/>
-                    <TextBlock Classes="muted" Margin="0,4,0,0" Text="Saved straight away."/>
+                    <Border Classes="pageHead"><Panel>
+                        <PathIcon Classes="headMark" Data="{StaticResource IconSettings}"/>
+                        <Grid ColumnDefinitions="Auto,*">
+                            <Border Classes="headIcon"><PathIcon Data="{StaticResource IconSettings}"/></Border>
+                            <StackPanel Grid.Column="1" Classes="headText">
+                                <TextBlock Classes="kicker" Text="MAKE IT YOURS"/>
+                                <TextBlock Text="Settings" Classes="pageTitle"/>
+                                <TextBlock Classes="muted" Margin="0,2,0,0" Text="Saved straight away."/>
+                            </StackPanel>
+                        </Grid>
+                    </Panel></Border>
 
                     <TextBlock Text="Achievements on this PC" Classes="section" Margin="0,26,0,4"/>
                     <TextBlock Classes="muted" FontSize="13" Margin="0,0,0,14" TextWrapping="Wrap"

@@ -17,6 +17,9 @@
         <SolidColorBrush x:Key="AccentHover" Color="#8CD0F7"/>
         <SolidColorBrush x:Key="AccentGradient" Color="#66C0F4"/>
         <SolidColorBrush x:Key="AccentAvatar" Color="#66C0F4"/>
+        <SolidColorBrush x:Key="AccentHead" Color="#1A3247"/>
+        <SolidColorBrush x:Key="AccentNav" Color="#1A3247"/>
+        <SolidColorBrush x:Key="AccentWash" Color="Transparent"/>
         <SolidColorBrush x:Key="Gold" Color="#F5C451"/>
         <SolidColorBrush x:Key="Green" Color="#5BD68A"/>
         <SolidColorBrush x:Key="Purple" Color="#B98CFF"/>

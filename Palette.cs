@@ -46,6 +46,35 @@ static class Palette
             EndPoint = new RelativePoint(1, 1, RelativeUnit.Relative),
             GradientStops = { new GradientStop(c, 0), new GradientStop(Mix(c, Color.Parse("#7B5CFF"), 0.7), 1) },
         };
+        var card = Color.Parse("#151C25");
+        // page header banners: accent in the top-left corner fading into the card colour
+        r["AccentHead"] = new LinearGradientBrush
+        {
+            StartPoint = new RelativePoint(0, 0, RelativeUnit.Relative),
+            EndPoint = new RelativePoint(1, 1, RelativeUnit.Relative),
+            GradientStops =
+            {
+                new GradientStop(Mix(card, c, 0.34), 0),
+                new GradientStop(Mix(card, Mix(c, Color.Parse("#7B5CFF"), 0.6), 0.14), 0.55),
+                new GradientStop(card, 1),
+            },
+        };
+        // the selected menu entry
+        r["AccentNav"] = new LinearGradientBrush
+        {
+            StartPoint = new RelativePoint(0, 0, RelativeUnit.Relative),
+            EndPoint = new RelativePoint(1, 0, RelativeUnit.Relative),
+            GradientStops = { new GradientStop(Color.FromArgb(0x40, c.R, c.G, c.B), 0), new GradientStop(Color.FromArgb(0x08, c.R, c.G, c.B), 1) },
+        };
+        // a soft glow at the top of every page
+        r["AccentWash"] = new RadialGradientBrush
+        {
+            Center = new RelativePoint(0.8, -0.05, RelativeUnit.Relative),
+            GradientOrigin = new RelativePoint(0.8, -0.05, RelativeUnit.Relative),
+            RadiusX = new RelativeScalar(0.75, RelativeUnit.Relative),
+            RadiusY = new RelativeScalar(0.55, RelativeUnit.Relative),
+            GradientStops = { new GradientStop(Color.FromArgb(0x26, c.R, c.G, c.B), 0), new GradientStop(Color.FromArgb(0, c.R, c.G, c.B), 1) },
+        };
     }
 
     public static IBrush Brush => new ImmutableSolidColorBrush(Current);

@@ -341,16 +341,24 @@ public partial class MainWindow : Window
 
     static Border Tile(string icon, string value, string label, string sub, IBrush color)
     {
+        var c = color is ISolidColorBrush sc ? sc.Color : Palette.Current;
         var badge = new Border
         {
-            Width = 44, Height = 44, CornerRadius = new CornerRadius(12),
-            Background = Fmt.Tint(color, 0x26),
+            Width = 46, Height = 46, CornerRadius = new CornerRadius(13),
+            Background = new LinearGradientBrush
+            {
+                StartPoint = new RelativePoint(0, 0, RelativeUnit.Relative),
+                EndPoint = new RelativePoint(1, 1, RelativeUnit.Relative),
+                GradientStops = { new GradientStop(Color.FromArgb(0x55, c.R, c.G, c.B), 0), new GradientStop(Color.FromArgb(0x1A, c.R, c.G, c.B), 1) },
+            },
+            BorderBrush = Fmt.Tint(color, 0x40), BorderThickness = new Thickness(1),
+            BoxShadow = new BoxShadows(new BoxShadow { Blur = 18, Color = Color.FromArgb(0x40, c.R, c.G, c.B) }),
             VerticalAlignment = VerticalAlignment.Top,
             Margin = new Thickness(0, 4, 0, 0),
-            Child = new PathIcon { Data = Icon(icon), Width = 19, Height = 19, Foreground = color },
+            Child = new PathIcon { Data = Icon(icon), Width = 20, Height = 20, Foreground = color },
         };
         var text = new StackPanel { Margin = new Thickness(14, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
-        text.Children.Add(new TextBlock { Text = value, FontSize = 26, FontWeight = FontWeight.Bold });
+        text.Children.Add(new TextBlock { Text = value, FontSize = 28, FontWeight = FontWeight.Bold, Foreground = new SolidColorBrush(Palette.Mix(c, Colors.White, 0.55)) });
         text.Children.Add(new TextBlock { Text = label, FontSize = 13 });
         text.Children.Add(new TextBlock
         {
@@ -361,7 +369,17 @@ public partial class MainWindow : Window
         DockPanel.SetDock(badge, Dock.Left);
         row.Children.Add(badge);
         row.Children.Add(text);
-        var tile = new Border { Margin = new Thickness(8), Padding = new Thickness(18, 16, 18, 16), Child = row };
+        var tile = new Border
+        {
+            Margin = new Thickness(8), Padding = new Thickness(18, 16, 18, 16), Child = row,
+            // the tile's colour glows in from the top-left corner
+            Background = new LinearGradientBrush
+            {
+                StartPoint = new RelativePoint(0, 0, RelativeUnit.Relative),
+                EndPoint = new RelativePoint(1, 1, RelativeUnit.Relative),
+                GradientStops = { new GradientStop(Palette.Mix(Color.Parse("#151C25"), c, 0.16), 0), new GradientStop(Color.Parse("#141A22"), 0.7) },
+            },
+        };
         tile.Classes.Add("card");
         return tile;
     }

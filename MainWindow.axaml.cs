@@ -162,6 +162,17 @@ public partial class MainWindow : Window
                 await LoadAsync(online: false);
         };
         Closed += (_, _) => watcher?.Dispose();
+        // a queue read moves Spotify's window off-screen for a moment: let it finish putting it back first
+        bool closingAfterQueue = false;
+        Closing += async (_, e) =>
+        {
+            if (closingAfterQueue || !queueBusy) return;
+            e.Cancel = true;
+            closingAfterQueue = true;
+            await Spotify.WaitForQueueRead();
+            Close();
+        };
+        Task.Run(Spotify.RepairWindow); // in case an earlier Trophyline was stopped in the middle of a read
     }
 
     static IBrush Res(string key) =>
@@ -653,6 +664,42 @@ public partial class MainWindow : Window
         BigState.Text = s.Playing ? "NOW PLAYING" : "PAUSED";
         BigTitle.Text = lastTitle ?? "Spotify is ready";
         BigArtist.Text = lastArtist ?? "press play or pick a playlist";
+        SetEqualizer(s.Playing);
+        if (lastTitle != null && lastTitle != heroSong) { heroSong = lastTitle; _ = ShowHeroArt(lastTitle, lastArtist ?? ""); }
+    }
+
+    // ----- the Music page's big "now playing" card -----
+
+    string? heroSong;      // the song whose cover is shown
+    string heroFrom = "";  // where the music comes from ("Also good"), from the queue
+
+    void SetEqualizer(bool on)
+    {
+        foreach (var bar in EqBars.Children) bar.Classes.Set("on", on);
+        BigState.Foreground = on ? Res("SpotifyGreen") : Res("Muted");
+    }
+
+    /// The song's cover, big, plus the same picture blurred behind the card, tinted with its main colour.
+    /// No cover found: the playlist's cover, or the plain green card.
+    async Task ShowHeroArt(string title, string artist)
+    {
+        var art = await SongArt.For(title, artist);
+        if (heroSong != title) return; // the song changed meanwhile
+        Bitmap? pic = art?.Picture ?? playlists.FirstOrDefault(p => heroFrom.Length > 0 && p.Title == heroFrom)?.Cover;
+        HeroArt.Source = pic;
+        HeroBg.Source = pic;
+        HeroArtFallback.IsVisible = pic == null;
+        var tint = art?.Tint ?? Color.FromRgb(0x1D, 0xB9, 0x54);
+        HeroTint.Background = new LinearGradientBrush
+        {
+            StartPoint = new RelativePoint(0, 0, RelativeUnit.Relative),
+            EndPoint = new RelativePoint(1, 1, RelativeUnit.Relative),
+            GradientStops =
+            {
+                new GradientStop(Color.FromArgb(0xB3, tint.R, tint.G, tint.B), 0),
+                new GradientStop(Color.FromArgb(0xF2, 0x0B, 0x10, 0x16), 0.85),
+            },
+        };
     }
 
     async void SendMusic(Spotify.Command c)
@@ -729,18 +776,29 @@ public partial class MainWindow : Window
         // the first section is "Now playing"; the rest is what comes next
         var next = q.Sections.Skip(1).ToList();
         QueueSub.Text = next.Count == 0 ? "Nothing queued after this song." : next[0].Heading;
+        // "Next from: Also good" → the hero says where the music comes from
+        var from = next.Select(s => s.Heading).LastOrDefault(h => h.Contains(':')) ?? "";
+        heroFrom = from.Length > 0 ? from[(from.LastIndexOf(':') + 1)..].Trim() : "";
+        HeroFrom.Text = heroFrom.Length > 0 ? $"Playing from {heroFrom}" : "";
+        if (heroSong != null && HeroArt.Source == null) _ = ShowHeroArt(heroSong, lastArtist ?? ""); // the playlist cover can stand in now
+
         int shown = 0;
         foreach (var (s, si) in next.Select((s, i) => (s, i)))
         {
             if (si > 0 && s.Heading.Length > 0)
-                QueueList.Children.Add(new TextBlock { Text = s.Heading, Classes = { "muted" }, FontSize = 12, Margin = new Thickness(0, 8, 0, 2) });
+                QueueList.Children.Add(new TextBlock { Text = s.Heading, Classes = { "muted" }, FontSize = 12, Margin = new Thickness(0, 10, 0, 2) });
             foreach (var t in s.Tracks)
             {
                 if (shown >= 20) break;
                 shown++;
-                var row = new Grid { ColumnDefinitions = new ColumnDefinitions("28,*"), Margin = new Thickness(0, 3) };
-                row.Children.Add(new TextBlock { Text = shown.ToString(), Foreground = Res("Muted"), FontSize = 12, VerticalAlignment = VerticalAlignment.Center });
-                var text = new StackPanel { [Grid.ColumnProperty] = 1 };
+                var row = new Grid { ColumnDefinitions = new ColumnDefinitions("44,12,*"), Margin = new Thickness(0, 4) };
+                // a small cover (the first few songs), or the song's place in line
+                var thumb = new Border { Width = 44, Height = 44, CornerRadius = new CornerRadius(8), ClipToBounds = true, Background = Res("CardHi") };
+                thumb.Child = new TextBlock { Text = shown.ToString(), Foreground = Res("Muted"), FontSize = 13, FontWeight = FontWeight.SemiBold,
+                                              HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
+                if (shown <= 8) _ = FillThumb(thumb, t);
+                row.Children.Add(thumb);
+                var text = new StackPanel { [Grid.ColumnProperty] = 2, VerticalAlignment = VerticalAlignment.Center };
                 text.Children.Add(new TextBlock { Text = t.Title, FontWeight = FontWeight.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis });
                 if (t.Artists.Length > 0)
                     text.Children.Add(new TextBlock { Text = t.Artists, Foreground = Res("Muted"), FontSize = 12, TextTrimming = TextTrimming.CharacterEllipsis });
@@ -750,7 +808,16 @@ public partial class MainWindow : Window
         }
         int total = next.Sum(s => s.Tracks.Count);
         if (total > shown)
-            QueueList.Children.Add(new TextBlock { Text = $"+{total - shown} more", Foreground = Res("Muted"), FontSize = 12, Margin = new Thickness(28, 4, 0, 0) });
+            QueueList.Children.Add(new TextBlock { Text = $"+{total - shown} more", Foreground = Res("Muted"), FontSize = 12, Margin = new Thickness(56, 6, 0, 0) });
+    }
+
+    static async Task FillThumb(Border thumb, QueueTrack t)
+    {
+        if (await SongArt.For(t.Title, t.Artists) is SongArt.Art art)
+        {
+            thumb.Child = null;
+            thumb.Background = new ImageBrush(art.Picture) { Stretch = Stretch.UniformToFill };
+        }
     }
 
     void FillPlaylists()

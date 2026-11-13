@@ -308,4 +308,41 @@
         <Setter Property="Maximum" Value="1"/>
         <Setter Property="Background" Value="#40FFFFFF"/>
     </Style>
+
+    <!-- Music page: equalizer bars that move while music plays (class "on") -->
+    <Style Selector="Border.eq1.on">
+        <Style.Animations>
+            <Animation Duration="0:0:0.55" IterationCount="Infinite" PlaybackDirection="Alternate" Easing="SineEaseInOut">
+                <KeyFrame Cue="0%"><Setter Property="Height" Value="4"/></KeyFrame>
+                <KeyFrame Cue="100%"><Setter Property="Height" Value="16"/></KeyFrame>
+            </Animation>
+        </Style.Animations>
+    </Style>
+    <Style Selector="Border.eq2.on">
+        <Style.Animations>
+            <Animation Duration="0:0:0.8" IterationCount="Infinite" PlaybackDirection="Alternate" Easing="SineEaseInOut">
+                <KeyFrame Cue="0%"><Setter Property="Height" Value="14"/></KeyFrame>
+                <KeyFrame Cue="100%"><Setter Property="Height" Value="5"/></KeyFrame>
+            </Animation>
+        </Style.Animations>
+    </Style>
+    <Style Selector="Border.eq3.on">
+        <Style.Animations>
+            <Animation Duration="0:0:0.65" IterationCount="Infinite" PlaybackDirection="Alternate" Easing="SineEaseInOut">
+                <KeyFrame Cue="0%"><Setter Property="Height" Value="6"/></KeyFrame>
+                <KeyFrame Cue="100%"><Setter Property="Height" Value="18"/></KeyFrame>
+            </Animation>
+        </Style.Animations>
+    </Style>
+    <Style Selector="Border.eq4.on">
+        <Style.Animations>
+            <Animation Duration="0:0:0.95" IterationCount="Infinite" PlaybackDirection="Alternate" Easing="SineEaseInOut">
+                <KeyFrame Cue="0%"><Setter Property="Height" Value="12"/></KeyFrame>
+                <KeyFrame Cue="100%"><Setter Property="Height" Value="3"/></KeyFrame>
+            </Animation>
+        </Style.Animations>
+    </Style>
+    <Style Selector="Border.eq:not(.on)">
+        <Setter Property="Height" Value="3"/>
+    </Style>
 </Styles>

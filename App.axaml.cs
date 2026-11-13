@@ -79,6 +79,7 @@ public partial class App : Application
                 File.WriteAllText(Path.Combine(Program.Home, "snapshot.txt"), w.DescribeView());
             }
             catch (Exception ex) { Program.LogError("snapshot: " + ex); }
+            await Spotify.WaitForQueueRead(); // Spotify's window must be put back before this exits
             desktop.Shutdown();
         };
     }

@@ -221,6 +221,7 @@ static partial class Spotify
     {
         var h = Win.FindMainWindow(SpotifyPids()).Handle;
         if (h == IntPtr.Zero) return;
+        Repair(h); // never open it somewhere off the screen
         Win.ShowWindow(h, Win.SW_SHOW);
         Win.ShowWindow(h, Win.SW_RESTORE);
         Win.SetForegroundWindow(h);
@@ -243,6 +244,7 @@ static partial class Spotify
         {
             var h = Win.FindMainWindow(SpotifyPids()).Handle;
             if (h == IntPtr.Zero) return (null, "Spotify isn't open.");
+            Repair(h);
             bool visible = Win.IsWindowVisible(h), minimized = Win.IsIconic(h);
             bool onScreen = visible && !minimized; // shown normally: read it where it is
             var place = Win.Placement(h);
@@ -270,7 +272,9 @@ static partial class Spotify
                     // back exactly as it was: hidden stays hidden, minimized stays minimized, same normal size and place
                     var back = place;
                     back.ShowCmd = visible ? Win.SW_SHOWMINNOACTIVE : Win.SW_HIDE;
+                    if (!visible) Win.ShowWindow(h, Win.SW_HIDE); // hide first, so it never flashes at its old place
                     Win.SetPlacement(h, back);
+                    if (!visible) Win.ShowWindow(h, Win.SW_HIDE);
                     Win.SetWindowLong(h, Win.GWL_EXSTYLE, exStyle);
                 }
             }
@@ -281,6 +285,36 @@ static partial class Spotify
             return (null, "Couldn't read Spotify's queue right now.");
         }
         finally { queueGate.Release(); }
+    }
+
+    /// Waits (up to a few seconds) for a queue read to finish, so Spotify's window is put back before Trophyline closes.
+    public static async Task WaitForQueueRead()
+    {
+        if (await queueGate.WaitAsync(TimeSpan.FromSeconds(8))) queueGate.Release();
+    }
+
+    /// If Spotify's window was ever left parked off-screen (e.g. Trophyline was killed during a queue read),
+    /// put it back on the screen (keeping it hidden or minimized) and give it its taskbar button back.
+    static void Repair(IntPtr h)
+    {
+        if (h == IntPtr.Zero) return;
+        var p = Win.Placement(h);
+        int ex = Win.GetWindowLong(h, Win.GWL_EXSTYLE);
+        if ((ex & Win.WS_EX_TOOLWINDOW) != 0) Win.SetWindowLong(h, Win.GWL_EXSTYLE, ex & ~Win.WS_EX_TOOLWINDOW);
+        if (p.Normal.Left > -10000 && p.Normal.Top > -10000) return;
+        bool visible = Win.IsWindowVisible(h), minimized = Win.IsIconic(h);
+        if (visible && !minimized) Win.ShowWindow(h, Win.SW_HIDE); // it was "shown" off-screen: hide it while it moves
+        p.Normal = new Win.RECT { Left = 120, Top = 80, Right = 120 + 1200, Bottom = 80 + 800 };
+        p.ShowCmd = minimized ? Win.SW_SHOWMINNOACTIVE : Win.SW_HIDE;
+        p.Flags = 0;
+        Win.SetPlacement(h, p);
+        if (!minimized) Win.ShowWindow(h, Win.SW_HIDE);
+    }
+
+    /// For the window: checks Spotify's window once (see Repair).
+    public static void RepairWindow()
+    {
+        if (Platform.Windows) Repair(Win.FindMainWindow(SpotifyPids()).Handle);
     }
 
     /// Spotify's "Queue" toggle in several languages (the button's accessible name follows Spotify's language).

@@ -943,12 +943,8 @@
                             <StackPanel Orientation="Horizontal" Spacing="16">
                                 <Panel x:Name="MyPicturePreview" VerticalAlignment="Center"/>
                                 <StackPanel VerticalAlignment="Center" Spacing="8">
-                                    <StackPanel Orientation="Horizontal" Spacing="8">
-                                        <Button Classes="pill" Click="ChoosePicture_Click"><TextBlock Text="Choose picture…"/></Button>
-                                        <Button x:Name="RemovePictureButton" Classes="pill" Click="RemovePicture_Click"><TextBlock Text="Remove"/></Button>
-                                    </StackPanel>
                                     <TextBlock x:Name="PictureStatus" Classes="muted" FontSize="12" TextWrapping="Wrap" MaxWidth="460"
-                                               Text="Any PNG or JPG. It's cropped to a square and made small (128 × 128). It replaces your shop icon while it's set."/>
+                                               Text="Your picture is your Steam profile picture."/>
                                 </StackPanel>
                             </StackPanel>
                             <TextBlock Text="Profile links" FontWeight="SemiBold" Margin="0,8,0,0"/>

@@ -1,37 +1,30 @@
 using Avalonia.Media.Imaging;
-using SkiaSharp;
 
 namespace Trophyline;
 
-/// Profile pictures: your own (my-avatar.jpg) and other players' (cached in avatars/).
+/// Profile pictures are Steam profile pictures: the server copies each player's from Steam at every
+/// Steam check. Yours is kept in avatars/mine.img; other players' are cached in avatars/.
 static class Avatars
 {
-    public const int Size = 128;
-
-    public static string MinePath => Path.Combine(Program.Home, "my-avatar.jpg");
     static string CacheFolder => Path.Combine(Program.Home, "avatars");
-
-    /// Turns any picture file into a 128 x 128 JPEG (centre crop). Returns null if it can't be read.
-    public static byte[]? Prepare(string file)
-    {
-        using var src = SKBitmap.Decode(file);
-        if (src == null) return null;
-        int side = Math.Min(src.Width, src.Height);
-        using var square = new SKBitmap(side, side);
-        if (!src.ExtractSubset(square, SKRectI.Create((src.Width - side) / 2, (src.Height - side) / 2, side, side))) return null;
-        using var small = square.Resize(new SKImageInfo(Size, Size), SKFilterQuality.High);
-        if (small == null) return null;
-        using var img = SKImage.FromBitmap(small);
-        using var data = img.Encode(SKEncodedImageFormat.Jpeg, 86);
-        return data?.ToArray();
-    }
+    public static string MinePath => Path.Combine(CacheFolder, "mine.img");
 
     public static bool HasMine => File.Exists(MinePath);
 
-    public static void SaveMine(byte[]? jpeg)
+    /// Your picture as the server has it (null = none / logged out).
+    public static void SaveMine(byte[]? picture)
     {
-        if (jpeg == null) { try { File.Delete(MinePath); } catch (IOException) { } }
-        else File.WriteAllBytes(MinePath, jpeg);
+        try
+        {
+            if (picture == null || picture.Length == 0) { if (File.Exists(MinePath)) File.Delete(MinePath); }
+            else
+            {
+                if (HasMine && File.ReadAllBytes(MinePath).AsSpan().SequenceEqual(picture)) return; // unchanged
+                Directory.CreateDirectory(CacheFolder);
+                File.WriteAllBytes(MinePath, picture);
+            }
+        }
+        catch (IOException ex) { Program.LogError("avatar: " + ex.Message); }
         mine = null;
     }
 

@@ -7,6 +7,7 @@
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
 
+let avatarDownloads = 0; // how often the fake Steam handed out a profile picture
 const BASE = Number(process.env.TEST_PORT_BASE || 8790); // TEST_PORT_BASE moves all three ports (to run next to another test)
 const DB = `http://127.0.0.1:${BASE}`, STEAM = `http://127.0.0.1:${BASE + 1}`, FN_PORT = BASE + 2;
 process.env.SUPABASE_URL = DB;
@@ -41,10 +42,18 @@ const steam = createServer(async (req, res) => {
     account(p.get("steamid")).name = p.get("name");
     return send(200, { ok: true });
   }
+  if (url.pathname.startsWith("/avatar/")) { // a Steam profile picture: a tiny "JPEG" that names its hash
+    avatarDownloads++;
+    res.writeHead(200, { "content-type": "image/jpeg" });
+    return res.end(Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.from(url.pathname.slice(8))]));
+  }
   if (url.pathname.includes("GetPlayerSummaries")) {
     if (p.get("key") !== "fake-key") return send(403, "<html>Forbidden</html>");
     const sid = p.get("steamids");
-    return send(200, { response: { players: accounts[sid] ? [{ steamid: sid, personaname: accounts[sid].name ?? accounts[sid].persona ?? "Player " + sid.slice(-2) }] : [] } });
+    const a = accounts[sid];
+    const hash = a?.avatar ?? "pic" + sid.slice(-2);
+    return send(200, { response: { players: a ? [{ steamid: sid, personaname: a.name ?? a.persona ?? "Player " + sid.slice(-2),
+      avatarhash: hash, avatarfull: `${STEAM}/avatar/${hash}.jpg` }] : [] } });
   }
   if (url.pathname.includes("GetGlobalAchievementPercentagesForApp")) {
     const appid = p.get("gameid");
@@ -248,6 +257,23 @@ if (process.env.KEEP !== "1") {
   account(A).name = "Alice";
   await sql(`update players set v_next = 0 where id = '${me.id}'`);
   await fn({ action: "verify", ...me });
+
+  // the profile picture is the Steam picture
+  let av = await rpc("tl_avatar", { p_id: me.id });
+  check("the Steam picture is the profile picture", Buffer.from(av.data, "base64").toString().endsWith("pic01.jpg"), av);
+  const downloadsBefore = avatarDownloads;
+  await sql(`update players set v_next = 0 where id = '${me.id}'`);
+  await fn({ action: "verify", ...me });
+  check("an unchanged Steam picture isn't downloaded again", avatarDownloads === downloadsBefore, { avatarDownloads, downloadsBefore });
+  account(A).avatar = "newpic";
+  await sql(`update players set v_next = 0 where id = '${me.id}'`);
+  await fn({ action: "verify", ...me });
+  av = await rpc("tl_avatar", { p_id: me.id });
+  check("a new Steam picture is picked up at the next check", Buffer.from(av.data, "base64").toString().endsWith("newpic.jpg"), av);
+  const own = await rpc("tl_set_avatar", { p_id: me.id, p_secret: me.secret, p_data: Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1]).toString("base64") });
+  check("a Steam player can't upload another picture", !!own.httpError, own);
+  const fakePic = await rpc("tl_srv_avatar", { p_id: me.id, p_hash: "x", p_data: null });
+  check("app key can't set pictures as the server", !!fakePic.httpError, fakePic);
   lb = await rpc("tl_leaderboard", { p_board: "season", p_me: me.id });
   check("season board uses Steam's season XP", lb.rows.length === 1 && lb.rows[0].value === 1780, lb.rows);
   const prof = await rpc("tl_player", { p_id: me.id });

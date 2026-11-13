@@ -149,6 +149,7 @@ public partial class MainWindow : Window
             nowTimer.Start();
             _ = RefreshMusic();
             await LoadAsync(online: true);
+            _ = SyncPicture(); // your Steam picture, as the server has it
             ready.TrySetResult();
             // a new version? ask right away (only after the user has seen the notice about updates)
             if (Updater.Allowed && App.Args.Length == 0 && Program.Settings().WelcomeAccepted) await AskToUpdate();
@@ -1053,7 +1054,7 @@ public partial class MainWindow : Window
     async Task UploadNow(bool force = true)
     {
         var err = await Online.Upload(force);
-        if (err == null && Online.Enabled) await SyncPicture();
+        if (Online.Enabled) await SyncPicture();
         if (OnlineStatus != null)
             OnlineStatus.Text = err == null
                 ? (Online.Enabled ? $"You're on the leaderboards as \"{Program.Settings().OnlineName}\"." : OnlineStatus.Text)
@@ -1270,13 +1271,14 @@ public partial class MainWindow : Window
         else VerifyNote(r?["flagged"]?.GetValue<bool>() == true ? "Checked. Something looked unusual, so your scores are paused for a check." : "Checked with Steam.", good: r?["flagged"]?.GetValue<bool>() != true);
         seasonIds.Clear();
         await ShowVerifyState();
+        await SyncPicture(); // the check also picks up a new Steam picture
     }
 
     async void Logout_Click(object? sender, RoutedEventArgs e)
     {
         await Online.Logout();
         BuildProfile();
-        UpdateAvatar();
+        await SyncPicture(); // logged out: no Steam picture
         AccountNote("Logged out. Your account and your place on the leaderboards are still there: log in with the same Steam account to get back.", good: true);
         seasonIds.Clear();
         BuildSettings();
@@ -1479,48 +1481,30 @@ public partial class MainWindow : Window
     void ShowMyPicture()
     {
         MyPicturePreview.Children.Clear();
-        MyPicturePreview.Children.Add(Avatar(Shop.Load().Equipped, data?.PersonaName ?? "?", 72, Palette.Brush, Online.MyId.Length > 0 ? Online.MyId : "me", 1));
-        RemovePictureButton.IsVisible = Avatars.HasMine;
+        MyPicturePreview.Children.Add(Avatar(Shop.Load().Equipped, DisplayName(), 72, Palette.Brush, Online.MyId.Length > 0 ? Online.MyId : "me", 1));
+        PictureStatus.Text = !Online.LoggedIn || Online.NeedsLogin
+            ? "Your picture is your Steam profile picture. Log in with Steam to show it."
+            : Avatars.HasMine
+                ? "This is your Steam profile picture. Change it in Steam; Trophyline picks it up at the next Steam check."
+                : "Your Steam profile picture shows here after the next Steam check (Check now above).";
     }
 
-    async void ChoosePicture_Click(object? sender, RoutedEventArgs e)
-    {
-        var files = await StorageProvider.OpenFilePickerAsync(new Avalonia.Platform.Storage.FilePickerOpenOptions
-        {
-            Title = "Choose a profile picture",
-            AllowMultiple = false,
-            FileTypeFilter = [new Avalonia.Platform.Storage.FilePickerFileType("Pictures") { Patterns = ["*.png", "*.jpg", "*.jpeg", "*.webp", "*.bmp", "*.gif"] }],
-        });
-        if (files.Count == 0 || files[0].TryGetLocalPath() is not string path) return;
-        var jpeg = await Task.Run(() => { try { return Avatars.Prepare(path); } catch { return null; } });
-        if (jpeg == null) { PictureStatus.Text = "Couldn't read that picture. Try a PNG or JPG."; return; }
-        Avatars.SaveMine(jpeg);
-        await SyncPicture();
-    }
-
-    async void RemovePicture_Click(object? sender, RoutedEventArgs e)
-    {
-        Avatars.SaveMine(null);
-        await SyncPicture();
-    }
-
-    /// Shows your picture everywhere and uploads it if it changed.
+    /// Your picture is your Steam picture: the server stores it at each Steam check; this fetches the server's copy.
     async Task SyncPicture()
     {
+        if (Online.LoggedIn && !Online.NeedsLogin)
+        {
+            var res = await Online.Avatar(Online.MyId);
+            var data = res?["data"] is JsonNode d && d.GetValueKind() == System.Text.Json.JsonValueKind.String ? d.GetValue<string>() : null;
+            if (data != null) // null = couldn't ask: keep what we have
+            {
+                try { Avatars.SaveMine(data.Length > 0 ? Convert.FromBase64String(data) : null); }
+                catch (FormatException) { }
+            }
+        }
+        else Avatars.SaveMine(null);
         UpdateAvatar();
         ShowMyPicture();
-        if (!Online.Enabled) { PictureStatus.Text = Avatars.HasMine ? "Saved. Others see it once you join the leaderboards." : "Removed."; return; }
-        var bytes = Avatars.HasMine ? await File.ReadAllBytesAsync(Avatars.MinePath) : null;
-        var hash = bytes == null ? "" : Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes));
-        var cfg = Program.Settings();
-        if (cfg.AvatarHash == hash) { PictureStatus.Text = ""; return; }
-        PictureStatus.Text = "Uploading…";
-        var err = await Online.SetAvatar(bytes);
-        if (err != null) { PictureStatus.Text = err; return; }
-        cfg = Program.Settings();
-        cfg.AvatarHash = hash;
-        Program.SaveSettings(cfg);
-        PictureStatus.Text = bytes == null ? "Removed from your profile." : "Uploaded: it's on your profile now.";
     }
 
     // ----- someone's profile -----

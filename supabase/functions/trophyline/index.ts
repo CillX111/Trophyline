@@ -108,7 +108,10 @@ export function xpFor(rarity: number | null): number {
 // ---------- logging in with Steam ----------
 
 /** The Steam profile name of an account (public even when the rest of the profile is private). */
-async function personaName(steamId: string): Promise<{ name?: string; error?: string }> {
+type Persona = { name?: string; avatarHash?: string; avatarUrl?: string; error?: string };
+
+/** The Steam profile name and picture of an account (public even when the rest of the profile is private). */
+async function personaName(steamId: string): Promise<Persona> {
   const key = env("STEAM_API_KEY");
   if (!key) return { error: "The Trophyline server doesn't have a Steam API key yet. Ask the server owner to add it." };
   const r = await steam(`/ISteamUser/GetPlayerSummaries/v2/?key=${encodeURIComponent(key)}&steamids=${steamId}&format=json`);
@@ -116,7 +119,42 @@ async function personaName(steamId: string): Promise<{ name?: string; error?: st
   if (r.status !== 200) return { error: `Steam didn't answer (${r.status}). Try again in a minute.` };
   const p = r.body?.response?.players?.[0];
   if (!p || p.steamid !== steamId) return { error: "Steam doesn't know this account." };
-  return { name: String(p.personaname ?? "") };
+  return {
+    name: String(p.personaname ?? ""),
+    avatarHash: typeof p.avatarhash === "string" ? p.avatarhash : undefined,
+    avatarUrl: typeof p.avatarfull === "string" ? p.avatarfull : undefined,
+  };
+}
+
+/** Steam's own pictures only (no other hosts), so nobody can make the server fetch anything else. */
+export function steamAvatarUrl(url: string | undefined): string | null {
+  if (!url) return null;
+  try {
+    const u = new URL(url);
+    // the test setup's fake Steam (STEAM_API_BASE) also serves its pictures
+    const fake = env("STEAM_API_BASE");
+    if (fake && u.origin === new URL(fake).origin) return u.toString();
+    if (u.protocol !== "https:" || !/(^|\.)(steamstatic\.com|akamaihd\.net)$/.test(u.hostname)) return null;
+    return u.toString();
+  } catch { return null; }
+}
+
+/** The player's picture is their Steam picture: stored on the server when it changed. Best effort. */
+async function syncAvatar(playerId: string, who: Persona): Promise<void> {
+  try {
+    const hash = (who.avatarHash ?? "").slice(0, 80);
+    const url = steamAvatarUrl(who.avatarUrl);
+    if (!playerId || !hash || !url) return;
+    const need = await db("tl_srv_avatar", { p_id: playerId, p_hash: hash, p_data: null });
+    if (!need?.need) return; // unchanged
+    const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
+    if (!res.ok) return;
+    const bytes = new Uint8Array(await res.arrayBuffer());
+    if (bytes.length === 0 || bytes.length > 65536) return;
+    let bin = "";
+    for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+    await db("tl_srv_avatar", { p_id: playerId, p_hash: hash, p_data: btoa(bin) });
+  } catch (e) { console.error("avatar", e); }
 }
 
 /** Log in (or sign up) with Steam's own login page: the app sends Steam's signed answer. */
@@ -125,10 +163,12 @@ async function login(body: any): Promise<any> {
   if (checked.error) return checked;
   const who = await personaName(checked.steamId!);
   if (who.error) return who;
-  return await db("tl_srv_steam_login", {
+  const r = await db("tl_srv_steam_login", {
     p_steam_id: checked.steamId, p_name: who.name, p_nonce: checked.nonce + "|" + checked.steamId,
     p_id: body?.id ?? null, p_secret: body?.secret ?? null,
   });
+  if (r?.id && !r.error) await syncAvatar(r.id, who);
+  return r;
 }
 
 const codeStarts = new Map<string, number[]>(); // caller IP -> times (ms) of recent code requests
@@ -168,7 +208,10 @@ async function codeFinish(body: any): Promise<any> {
     p_steam_id: c.steam_id, p_name: clean, p_nonce: "code|" + body.challenge,
     p_id: body?.id ?? null, p_secret: body?.secret ?? null,
   });
-  if (!r?.error) await db("tl_srv_code_done", { p_challenge: String(body.challenge) });
+  if (!r?.error) {
+    await db("tl_srv_code_done", { p_challenge: String(body.challenge) });
+    if (r?.id) await syncAvatar(r.id, who);
+  }
   return r;
 }
 
@@ -225,8 +268,9 @@ async function verify(body: any): Promise<any> {
   const sid: string = start.steam_id;
   const k = encodeURIComponent(key);
   // the Steam name is the Trophyline name (without a login code someone may still have in it)
-  const who = await personaName(sid).catch(() => ({} as { name?: string }));
+  const who: Persona = await personaName(sid).catch(() => ({}));
   const steamName = (who.name ?? "").replace(/\s*\bTL[0-9A-F]{5}\b\s*/gi, " ").trim();
+  await syncAvatar(start.id, who); // the picture is the Steam picture too
 
   const owned = await steam(`/IPlayerService/GetOwnedGames/v1/?key=${k}&steamid=${sid}&include_appinfo=1&include_played_free_games=1&format=json`);
   if (owned.status === 401 || owned.status === 403) {

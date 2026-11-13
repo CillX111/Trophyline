@@ -632,6 +632,9 @@ declare
   v_now bigint := tl_now();
 begin
   if me is null then raise exception 'join the leaderboards first'; end if;
+  if (select steam_id from players where id = me) is not null then
+    raise exception 'Your picture is your Steam profile picture. Change it in Steam; Trophyline picks it up at the next Steam check.';
+  end if;
   if coalesce(p_data, '') = '' then
     delete from avatars where player = me;
     update players set avatar_ver = 0 where id = me;
@@ -651,6 +654,32 @@ begin
   insert into avatars (player, data, updated) values (me, img, v_now)
   on conflict (player) do update set data = excluded.data, updated = excluded.updated;
   update players set avatar_ver = v_now where id = me;
+  return jsonb_build_object('ok', true, 'avatar', v_now);
+end $$;
+
+-- Your picture is your Steam profile picture: the server function stores it (tl_srv_avatar).
+-- p_data null: only asks whether this Steam picture (by Steam's hash) is new; then it's sent.
+alter table avatars add column if not exists source text not null default '';
+create or replace function tl_srv_avatar(p_id text, p_hash text, p_data text) returns jsonb
+language plpgsql security definer
+set search_path = public, extensions as $$
+declare
+  img bytea;
+  v_now bigint := tl_now();
+begin
+  if not exists (select 1 from players where id = p_id) then return jsonb_build_object('error', 'no such player'); end if;
+  if exists (select 1 from avatars where player = p_id and source = 'steam:' || coalesce(p_hash, '')) then
+    return jsonb_build_object('ok', true, 'need', false);
+  end if;
+  if p_data is null then return jsonb_build_object('ok', true, 'need', true); end if;
+  begin img := decode(p_data, 'base64'); exception when others then return jsonb_build_object('error', 'not a picture'); end;
+  if length(img) = 0 or length(img) > 65536
+     or not (substring(img from 1 for 3) = '\xffd8ff'::bytea or substring(img from 1 for 4) = '\x89504e47'::bytea) then
+    return jsonb_build_object('error', 'not a picture');
+  end if;
+  insert into avatars (player, data, updated, source) values (p_id, img, v_now, 'steam:' || p_hash)
+  on conflict (player) do update set data = excluded.data, updated = excluded.updated, source = excluded.source;
+  update players set avatar_ver = v_now where id = p_id;
   return jsonb_build_object('ok', true, 'avatar', v_now);
 end $$;
 
@@ -1130,7 +1159,8 @@ to anon, authenticated;
 -- only the server function (service role) may store Steam results
 grant execute on function tl_srv_begin(text, text), tl_srv_link(text, text, text, text), tl_srv_apply(text, jsonb),
   tl_srv_profile(text, jsonb), tl_srv_code(text, text),
-  tl_srv_steam_login(text, text, text, text, text), tl_srv_code_start(text), tl_srv_code_get(text), tl_srv_code_done(text)
+  tl_srv_steam_login(text, text, text, text, text), tl_srv_code_start(text), tl_srv_code_get(text), tl_srv_code_done(text),
+  tl_srv_avatar(text, text, text)
 to service_role;
 
 -- let the API see new or changed functions right away (otherwise: "Could not find the function ... in the schema cache")

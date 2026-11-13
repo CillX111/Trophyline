@@ -10,7 +10,7 @@
     <AssemblyName>Trophyline</AssemblyName>
     <RootNamespace>Trophyline</RootNamespace>
     <Product>Trophyline</Product>
-    <Version>1.8.5</Version>
+    <Version>1.8.6</Version>
     <ApplicationIcon>app.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <BuiltInComInteropSupport>true</BuiltInComInteropSupport>

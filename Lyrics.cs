@@ -364,7 +364,7 @@ sealed class PlaybackClock : IDisposable
 
     static string Run(string file, params string[] args)
     {
-        var psi = new ProcessStartInfo(file) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, CreateNoWindow = true };
+        var psi = new ProcessStartInfo(file) { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false, CreateNoWindow = true, StandardOutputEncoding = Encoding.UTF8 };
         foreach (var a in args) psi.ArgumentList.Add(a);
         using var p = Process.Start(psi);
         if (p == null) return "";

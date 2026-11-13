@@ -161,7 +161,12 @@ public partial class MainWindow : Window
             if (!loading && lastLoad != default && DateTime.Now - lastLoad > TimeSpan.FromMinutes(2))
                 await LoadAsync(online: false);
         };
-        Closed += (_, _) => watcher?.Dispose();
+        Closed += (_, _) => { watcher?.Dispose(); lyricsClock.Dispose(); };
+        lyricsTimer.Tick += (_, _) => LyricsTick();
+        LyricsScroll.AddHandler(PointerWheelChangedEvent, (_, _) => userScrolledAt = DateTime.Now,
+            RoutingStrategies.Tunnel | RoutingStrategies.Bubble, true);
+        PropertyChanged += (_, e) => { if (e.Property == WindowStateProperty || e.Property == IsVisibleProperty) UpdateLyricsRunning(); };
+        ShowLyricsMessage("Play something on Spotify and its lyrics show up here.");
         // a queue read moves Spotify's window off-screen for a moment: let it finish putting it back first
         bool closingAfterQueue = false;
         Closing += async (_, e) =>
@@ -676,6 +681,8 @@ public partial class MainWindow : Window
             return;
         }
         if (s.Playing && s.Title.Length > 0) { lastTitle = s.Title; lastArtist = s.Artist; }
+        musicPlaying = s.Playing;
+        if (lastTitle != null && lastTitle != lyricsSong) _ = LoadLyrics(lastTitle, lastArtist ?? "");
         // a new song started while you look at the Music page: what's next has moved on
         if (s.Playing && s.Title.Length > 0 && queueForTitle != null && s.Title != queueForTitle && MusicPage.IsVisible) _ = RefreshQueue();
         MiniTitle.Text = lastTitle ?? (s.Playing ? "Playing" : "Paused");
@@ -719,6 +726,16 @@ public partial class MainWindow : Window
                 new GradientStop(Color.FromArgb(0xF2, 0x0B, 0x10, 0x16), 0.85),
             },
         };
+        LyricsCard.Background = new LinearGradientBrush
+        {
+            StartPoint = new RelativePoint(0, 0, RelativeUnit.Relative),
+            EndPoint = new RelativePoint(1, 1, RelativeUnit.Relative),
+            GradientStops =
+            {
+                new GradientStop(Color.FromArgb(0x4D, tint.R, tint.G, tint.B), 0),
+                new GradientStop(Color.FromRgb(0x14, 0x1A, 0x22), 0.75),
+            },
+        };
     }
 
     async void SendMusic(Spotify.Command c)
@@ -747,6 +764,164 @@ public partial class MainWindow : Window
         else Spotify.ShowWindow();
         await Task.Delay(300);
         await RefreshMusic();
+    }
+
+    // ----- lyrics: looked up on LRCLIB, following Spotify's position -----
+
+    readonly PlaybackClock lyricsClock = new();
+    readonly DispatcherTimer lyricsTimer = new() { Interval = TimeSpan.FromMilliseconds(60) };
+    readonly System.Diagnostics.Stopwatch lyricsWatch = System.Diagnostics.Stopwatch.StartNew();
+    LyricSet? lyrics;
+    string? lyricsSong, lyricsArtist;
+    int lyricsOffset;           // ms added to Spotify's position for this song (+ = lyrics earlier)
+    int lyricsLine = -2;        // the line that's lit up
+    long guessMs, lastTickAt;   // our own count, for when Spotify doesn't tell its position
+    bool musicPlaying;
+    DateTime userScrolledAt;
+
+    /// The timer and Spotify's position helper only run while you can see the lyrics.
+    void UpdateLyricsRunning()
+    {
+        bool on = MusicPage.IsVisible && LyricsBody.IsVisible && IsVisible && WindowState != WindowState.Minimized;
+        if (on) { lyricsClock.Start(); lyricsTimer.Start(); }
+        else { lyricsClock.Stop(); lyricsTimer.Stop(); lastTickAt = 0; }
+    }
+
+    static bool SameSong(string a, string b)
+    {
+        if (a.Length == 0 || b.Length == 0) return true;
+        return a.StartsWith(b, StringComparison.OrdinalIgnoreCase) || b.StartsWith(a, StringComparison.OrdinalIgnoreCase);
+    }
+
+    void ShowLyricsMessage(string text)
+    {
+        LyricsList.Children.Clear();
+        LyricsEmpty.Text = text;
+        LyricsEmpty.IsVisible = true;
+        LyricsSyncBox.IsVisible = false;
+    }
+
+    async Task LoadLyrics(string title, string artist, bool again = false)
+    {
+        lyricsSong = title; lyricsArtist = artist;
+        lyrics = null; lyricsLine = -2; guessMs = 0;
+        lyricsOffset = Lyrics.OffsetFor(title, artist);
+        LyricsSub.Text = $"{title}  ·  {artist}";
+        ShowLyricsMessage("Looking for the lyrics…");
+        if (again) Lyrics.Forget(title, artist);
+        await Task.Delay(700); // give Spotify's position a moment, so the song's length helps pick the right lyrics
+        if (lyricsSong != title) return;
+        int dur = lyricsClock.Now is { } r && SameSong(r.Title, title) ? (int)(r.DurMs / 1000) : 0;
+        var set = await Lyrics.For(title, artist, dur);
+        if (lyricsSong != title) return; // the song changed meanwhile
+        lyrics = set;
+        if (set == null || set.Lines.Count == 0) { ShowLyricsMessage("No lyrics found for this song."); return; }
+
+        LyricsEmpty.IsVisible = false;
+        LyricsList.Margin = set.Synced ? new Thickness(26, 150, 26, 170) : new Thickness(26, 14, 26, 24);
+        for (int i = 0; i < set.Lines.Count; i++)
+        {
+            var line = set.Lines[i];
+            var tb = new TextBlock { Text = line.Text.Length == 0 ? "♪" : line.Text, Classes = { "lyr" } };
+            if (!set.Synced) tb.Classes.Add("plain");
+            else
+            {
+                int at = i;
+                tb.PointerPressed += (_, _) => SyncLyricsTo(at);
+                ToolTip.SetTip(tb, "Click when this line is sung to sync the lyrics");
+            }
+            LyricsList.Children.Add(tb);
+        }
+        LyricsSyncBox.IsVisible = set.Synced;
+        LyricsSub.Text = set.Synced
+            ? $"{title}  ·  {artist}  ·  out of sync? Click the line being sung"
+            : $"{title}  ·  {artist}  ·  these lyrics have no timing, so they don't follow the song";
+        ShowLyricsOffset();
+        LyricsScroll.Offset = new Vector(0, 0);
+        userScrolledAt = default;
+    }
+
+    /// Where the song is (ms), with your timing fix.
+    long LyricsPosition()
+    {
+        var r = lyricsClock.Now;
+        long raw = r != null && lyricsSong != null && SameSong(r.Title, lyricsSong) ? r.PosMs : guessMs;
+        return raw + lyricsOffset;
+    }
+
+    void LyricsTick()
+    {
+        long now = lyricsWatch.ElapsedMilliseconds;
+        long dt = lastTickAt == 0 ? 0 : Math.Min(now - lastTickAt, 1000);
+        lastTickAt = now;
+        if (musicPlaying) guessMs += dt;
+        if (lyrics is not { Synced: true } set || LyricsList.Children.Count != set.Lines.Count) return;
+
+        int i = Lyrics.LineAt(set, LyricsPosition());
+        if (i != lyricsLine)
+        {
+            for (int j = 0; j < LyricsList.Children.Count; j++)
+            {
+                var c = LyricsList.Children[j];
+                c.Classes.Set("now", j == i);
+                c.Classes.Set("past", j < i);
+            }
+            lyricsLine = i;
+        }
+
+        // glide so the sung line sits in the middle (unless you just scrolled yourself)
+        if ((DateTime.Now - userScrolledAt).TotalSeconds < 4) return;
+        double target = 0;
+        if (i >= 0)
+        {
+            var c = LyricsList.Children[i];
+            target = LyricsList.Margin.Top + c.Bounds.Y + c.Bounds.Height / 2 - LyricsScroll.Viewport.Height / 2;
+        }
+        target = Math.Clamp(target, 0, Math.Max(0, LyricsScroll.Extent.Height - LyricsScroll.Viewport.Height));
+        double cur = LyricsScroll.Offset.Y, next = cur + (target - cur) * 0.16;
+        if (Math.Abs(target - next) < 0.6) next = target;
+        if (next != cur) LyricsScroll.Offset = new Vector(0, next);
+    }
+
+    /// You clicked the line that's being sung: move the lyrics so that line starts now.
+    void SyncLyricsTo(int line)
+    {
+        if (lyrics is not { Synced: true } set || lyricsSong == null) return;
+        long raw = LyricsPosition() - lyricsOffset;
+        SetLyricsOffset((int)Math.Clamp(set.Lines[line].Ms + 150 - raw, -600000, 600000));
+        userScrolledAt = default;
+    }
+
+    void SetLyricsOffset(int ms)
+    {
+        if (lyricsSong == null) return;
+        lyricsOffset = ms;
+        Lyrics.SetOffset(lyricsSong, lyricsArtist ?? "", ms);
+        ShowLyricsOffset();
+        LyricsTick();
+    }
+
+    void ShowLyricsOffset()
+    {
+        double s = Math.Abs(lyricsOffset) / 1000.0;
+        LyricsOffset.Text = lyricsOffset == 0 ? "in sync" : $"{s:0.0} s {(lyricsOffset > 0 ? "earlier" : "later")}";
+        LyricsResetButton.IsVisible = lyricsOffset != 0;
+    }
+
+    void LyricsEarlier_Click(object? sender, RoutedEventArgs e) => SetLyricsOffset(lyricsOffset + 500);
+    void LyricsLater_Click(object? sender, RoutedEventArgs e) => SetLyricsOffset(lyricsOffset - 500);
+    void LyricsReset_Click(object? sender, RoutedEventArgs e) => SetLyricsOffset(0);
+
+    async void LyricsReload_Click(object? sender, RoutedEventArgs e)
+    {
+        if (lyricsSong != null) await LoadLyrics(lyricsSong, lyricsArtist ?? "", again: true);
+    }
+
+    void LyricsToggle_Click(object? sender, RoutedEventArgs e)
+    {
+        LyricsBody.IsVisible = !LyricsBody.IsVisible;
+        LyricsToggleText.Text = LyricsBody.IsVisible ? "Hide" : "Show";
+        UpdateLyricsRunning();
     }
 
     // ----- Spotify's queue, read without showing Spotify -----
@@ -2526,6 +2701,7 @@ public partial class MainWindow : Window
             syncingNav = false;
         }
         if (page == SettingsPage || page == PlaytimePage || page == StoragePage) SyncSettingsTabs(page);
+        UpdateLyricsRunning();
         _ = FadeIn(page);
     }
 

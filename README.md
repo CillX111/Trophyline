@@ -70,6 +70,10 @@ The files aren't signed by Microsoft or Apple, so the first launch shows a warni
   them with one click; a mini-player in the sidebar shows the current song with
   previous / play-pause / next. It controls the Spotify app on your computer, so the
   music keeps playing when Trophyline is closed. No Spotify login needed.
+- **Lyrics**: the Music page shows the lyrics of the song that's playing (from
+  [LRCLIB](https://lrclib.net)), lighting up and scrolling along with the song. Out of
+  sync? Click the line that's being sung, or nudge them with Earlier / Later; the fix is
+  remembered per song.
 - **Game soundtracks**: give a game one of your playlists on its page. When you launch
   that game, the background tracker starts the playlist (and pauses it when you quit,
   if you like), even with the window closed
@@ -136,7 +140,8 @@ Data folder: `%LOCALAPPDATA%\Trophyline` (Windows), `~/Library/Application Suppo
 - `icons/`, `rarity/`: cached pictures and rarity stats
 - `sessions.tsv`: every play session (app id, start, end as unix time);
   `open-session.txt` is the game running right now
-- `music/`: saved playlists and `soundtracks.json` (which game plays which playlist)
+- `music/`: saved playlists, `soundtracks.json` (which game plays which playlist) and
+  `lyrics/` (lyrics already looked up, plus your timing fixes in `offsets.json`)
 - `config.json`: `language` (e.g. `"german"`), `accent`, `hideSpotify`,
   `pauseSoundtrackOnQuit`, `unlockPopups`, and optional `steamFolder` / `statsFolder`
   if Steam is somewhere unusual

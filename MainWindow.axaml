@@ -604,6 +604,72 @@
                         </Panel>
                     </Border>
 
+                    <!-- ===== lyrics, following the song ===== -->
+                    <Border x:Name="LyricsCard" Classes="card" Padding="0" Margin="0,18,0,0" ClipToBounds="True">
+                        <Border.Background>
+                            <LinearGradientBrush StartPoint="0%,0%" EndPoint="100%,100%">
+                                <GradientStop Color="#331DB954" Offset="0"/>
+                                <GradientStop Color="#141A22" Offset="0.7"/>
+                            </LinearGradientBrush>
+                        </Border.Background>
+                        <DockPanel>
+                            <Grid DockPanel.Dock="Top" ColumnDefinitions="*,Auto" Margin="22,16,16,6">
+                                <StackPanel VerticalAlignment="Center">
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <PathIcon Data="{StaticResource IconMusic}" Width="15" Height="15" Foreground="{StaticResource SpotifyGreen}"/>
+                                        <TextBlock Text="Lyrics" FontWeight="Bold" FontSize="18"/>
+                                    </StackPanel>
+                                    <TextBlock x:Name="LyricsSub" Classes="muted" FontSize="12" TextWrapping="Wrap" Margin="0,2,0,0"/>
+                                </StackPanel>
+                                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="6" VerticalAlignment="Center">
+                                    <StackPanel x:Name="LyricsSyncBox" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
+                                        <Button Classes="pill" Click="LyricsEarlier_Click" ToolTip.Tip="Lyrics come 0.5 s earlier (they're late)">
+                                            <TextBlock Text="Earlier"/>
+                                        </Button>
+                                        <TextBlock x:Name="LyricsOffset" MinWidth="92" TextAlignment="Center" VerticalAlignment="Center" FontSize="13" FontWeight="SemiBold"
+                                                   ToolTip.Tip="How far the lyrics are moved for this song"/>
+                                        <Button Classes="pill" Click="LyricsLater_Click" ToolTip.Tip="Lyrics come 0.5 s later (they're early)">
+                                            <TextBlock Text="Later"/>
+                                        </Button>
+                                        <Button x:Name="LyricsResetButton" Classes="pill" Click="LyricsReset_Click" ToolTip.Tip="Back to the original timing">
+                                            <TextBlock Text="Reset"/>
+                                        </Button>
+                                    </StackPanel>
+                                    <Button Classes="pill" Click="LyricsReload_Click" ToolTip.Tip="Look the lyrics up again">
+                                        <TextBlock Text="Reload"/>
+                                    </Button>
+                                    <Button x:Name="LyricsToggle" Classes="pill" Click="LyricsToggle_Click" ToolTip.Tip="Show or hide the lyrics">
+                                        <TextBlock x:Name="LyricsToggleText" Text="Hide"/>
+                                    </Button>
+                                </StackPanel>
+                            </Grid>
+                            <Panel x:Name="LyricsBody" Height="380">
+                                <ScrollViewer x:Name="LyricsScroll" VerticalScrollBarVisibility="Hidden">
+                                    <StackPanel x:Name="LyricsList" Margin="22,150,22,170" Spacing="4"/>
+                                </ScrollViewer>
+                                <!-- soft fade at the top and bottom -->
+                                <Border Height="60" VerticalAlignment="Top" IsHitTestVisible="False">
+                                    <Border.Background>
+                                        <LinearGradientBrush StartPoint="0%,0%" EndPoint="0%,100%">
+                                            <GradientStop Color="#F0161D26" Offset="0"/>
+                                            <GradientStop Color="#00161D26" Offset="1"/>
+                                        </LinearGradientBrush>
+                                    </Border.Background>
+                                </Border>
+                                <Border Height="70" VerticalAlignment="Bottom" IsHitTestVisible="False">
+                                    <Border.Background>
+                                        <LinearGradientBrush StartPoint="0%,0%" EndPoint="0%,100%">
+                                            <GradientStop Color="#00141A22" Offset="0"/>
+                                            <GradientStop Color="#F0141A22" Offset="1"/>
+                                        </LinearGradientBrush>
+                                    </Border.Background>
+                                </Border>
+                                <TextBlock x:Name="LyricsEmpty" Classes="muted" FontSize="15" TextWrapping="Wrap" TextAlignment="Center"
+                                           HorizontalAlignment="Center" VerticalAlignment="Center" MaxWidth="420"/>
+                            </Panel>
+                        </DockPanel>
+                    </Border>
+
                     <!-- ===== playlists (left) and up next (right) ===== -->
                     <Grid ColumnDefinitions="*,24,340" Margin="0,26,0,0">
                         <StackPanel>

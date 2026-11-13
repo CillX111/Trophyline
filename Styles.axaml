@@ -222,6 +222,38 @@
         <Setter Property="BorderBrush" Value="{DynamicResource Accent}"/>
     </Style>
 
+    <!-- lyrics lines: the one being sung lights up, the rest wait dimmed -->
+    <Style Selector="TextBlock.lyr">
+        <Setter Property="FontSize" Value="23"/>
+        <Setter Property="FontWeight" Value="Bold"/>
+        <Setter Property="TextWrapping" Value="Wrap"/>
+        <Setter Property="Foreground" Value="#FFFFFFFF"/>
+        <Setter Property="Opacity" Value="0.38"/>
+        <Setter Property="Padding" Value="0,5"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="RenderTransformOrigin" Value="0%,50%"/>
+        <Setter Property="RenderTransform" Value="scale(1)"/>
+        <Setter Property="Transitions">
+            <Transitions>
+                <DoubleTransition Property="Opacity" Duration="0:0:0.35" Easing="CubicEaseOut"/>
+                <TransformOperationsTransition Property="RenderTransform" Duration="0:0:0.35" Easing="CubicEaseOut"/>
+            </Transitions>
+        </Setter>
+    </Style>
+    <Style Selector="TextBlock.lyr.past"><Setter Property="Opacity" Value="0.22"/></Style>
+    <Style Selector="TextBlock.lyr:pointerover"><Setter Property="Opacity" Value="0.7"/></Style>
+    <Style Selector="TextBlock.lyr.now">
+        <Setter Property="Opacity" Value="1"/>
+        <Setter Property="RenderTransform" Value="scale(1.06)"/>
+    </Style>
+    <Style Selector="TextBlock.lyr.plain">
+        <Setter Property="FontSize" Value="18"/>
+        <Setter Property="FontWeight" Value="SemiBold"/>
+        <Setter Property="Opacity" Value="0.85"/>
+        <Setter Property="Padding" Value="0,2"/>
+        <Setter Property="Cursor" Value="Arrow"/>
+    </Style>
+
     <!-- round icon buttons (music controls) -->
     <Style Selector="Button.icon">
         <Setter Property="Width" Value="34"/>
